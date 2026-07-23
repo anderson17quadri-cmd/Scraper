@@ -414,6 +414,9 @@ header {
     </div>
     <div id="preview-zip" hidden style="margin-bottom:10px;"></div>
     <div id="preview-grid" class="preview-grid"></div>
+    <button class="btn btn-ghost btn-full" id="btn-preview-more" onclick="loadMorePreview()" hidden style="margin-top:10px;">
+      Carregar mais
+    </button>
   </div>
 
   <!-- LOG CONSOLE -->
@@ -679,7 +682,27 @@ async function loadPreview() {
   previewSelected = new Set(previewItems.filter(i => !i.already).map(i => i.id));
   renderPreview();
   $('preview-actions').hidden = false;
-  toast(`${previewItems.length} midias encontradas`);
+  $('btn-preview-more').hidden = !r.has_more;
+  toast(`${previewItems.length} midias encontradas${r.has_more ? ' (tem mais, use "Carregar mais")' : ''}`);
+}
+
+async function loadMorePreview() {
+  $('btn-preview-more').disabled = true;
+  $('btn-preview-more').textContent = 'Carregando...';
+
+  const r = await api('/api/preview-more', {method:'POST', body:JSON.stringify({target_username: previewTarget})});
+
+  $('btn-preview-more').disabled = false;
+  $('btn-preview-more').textContent = 'Carregar mais';
+
+  if (!r.ok) return toast(r.msg, 'err');
+
+  const novos = r.items.filter(it => !it.already);
+  novos.forEach(it => previewSelected.add(it.id));
+  previewItems = previewItems.concat(r.items);
+  renderPreview();
+  $('btn-preview-more').hidden = !r.has_more;
+  toast(`+${r.items.length} midias carregadas`);
 }
 
 function renderPreview() {

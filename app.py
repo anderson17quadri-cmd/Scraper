@@ -124,9 +124,21 @@ scrape_state = {"running": False, "connected": False, "current_account": "",
                 "message": "Pronto", "progress": 0, "total": 0, "current": "", "logs": [],
                 "stop_requested": False, "zip_url": None}
 
-# cache em memoria: username-alvo -> {"cl": Client autenticado, "medias": [Media,...]}
-# preenchido por /api/preview e consumido por /api/download-selected
+# cache em memoria: username-alvo -> {"cl": Client autenticado, "uid":..,
+# "medias": [Media,...], "end_cursor": str|None}
+# preenchido por /api/preview(-more) e consumido por /api/download-selected
 preview_cache = {}
+PREVIEW_PAGE_SIZE = 30
+
+def _media_preview_item(m):
+    thumb = m.thumbnail_url or (m.resources[0].thumbnail_url if m.media_type == 8 and m.resources else None)
+    return {
+        "id": str(m.id),
+        "type": "carousel" if m.media_type == 8 else ("video" if m.media_type == 2 else "photo"),
+        "thumbnail": str(thumb) if thumb else None,
+        "date": m.taken_at.isoformat(),
+        "already": is_downloaded(m.id),
+    }
 
 def _make_zip(target, paths):
     paths = [p for p in paths if p and os.path.exists(p)]
@@ -479,23 +491,43 @@ def api_preview():
 
     try:
         uid = cl.user_id_from_username(target_username)
-        medias = cl.user_medias(uid, amount=int(data.get("amount") or 30))
+        medias, end_cursor = cl.user_medias_paginated(uid, amount=PREVIEW_PAGE_SIZE)
     except Exception as e:
         return jsonify({"ok": False, "msg": f"Erro ao buscar @{target_username}: {e}"})
 
-    preview_cache[target_username] = {"cl": cl, "medias": medias}
+    preview_cache[target_username] = {"cl": cl, "uid": uid, "medias": list(medias), "end_cursor": end_cursor}
 
-    items = []
-    for m in medias:
-        thumb = m.thumbnail_url or (m.resources[0].thumbnail_url if m.media_type == 8 and m.resources else None)
-        items.append({
-            "id": str(m.id),
-            "type": "carousel" if m.media_type == 8 else ("video" if m.media_type == 2 else "photo"),
-            "thumbnail": str(thumb) if thumb else None,
-            "date": m.taken_at.isoformat(),
-            "already": is_downloaded(m.id),
-        })
-    return jsonify({"ok": True, "items": items, "target": target_username})
+    return jsonify({
+        "ok": True,
+        "items": [_media_preview_item(m) for m in medias],
+        "target": target_username,
+        "has_more": bool(end_cursor),
+    })
+
+@app.route("/api/preview-more", methods=["POST"])
+def api_preview_more():
+    data = request.get_json() or {}
+    target_username = (data.get("target_username") or "").strip()
+    cache = preview_cache.get(target_username)
+    if not cache:
+        return jsonify({"ok": False, "msg": "Preview expirado, busque de novo."})
+    if not cache.get("end_cursor"):
+        return jsonify({"ok": True, "items": [], "has_more": False})
+
+    try:
+        medias, end_cursor = cache["cl"].user_medias_paginated(
+            cache["uid"], amount=PREVIEW_PAGE_SIZE, end_cursor=cache["end_cursor"])
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Erro ao buscar mais midias: {e}"})
+
+    cache["medias"].extend(medias)
+    cache["end_cursor"] = end_cursor
+
+    return jsonify({
+        "ok": True,
+        "items": [_media_preview_item(m) for m in medias],
+        "has_more": bool(end_cursor),
+    })
 
 @app.route("/api/download-selected", methods=["POST"])
 def api_download_selected():
