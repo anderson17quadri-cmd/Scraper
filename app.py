@@ -187,6 +187,54 @@ def _story_preview_item(s):
         "already": is_downloaded(s.id),
     }
 
+class _RawStory:
+    """Mesma 'forma' de um Story do instagrapi (id/pk/media_type/thumbnail_url/
+    video_url/taken_at/video_duration), montada direto do JSON cru da API.
+
+    Existe porque cl.highlight_info() valida a resposta inteira com pydantic
+    (incluindo Highlight.user.friendship_status.user_id), e o Instagram as
+    vezes nao manda esse campo -- af entao a lib inteira quebra so por causa
+    de um campo que a gente nem usa pra baixar o destaque."""
+    def __init__(self, item):
+        self.id = str(item.get("pk") or item.get("id") or "")
+        self.pk = self.id
+        self.media_type = item.get("media_type", 1)
+        self.thumbnail_url = self._best_url((item.get("image_versions2") or {}).get("candidates"))
+        self.video_url = self._best_url(item.get("video_versions"))
+        ts = item.get("taken_at")
+        self.taken_at = datetime.fromtimestamp(ts) if ts else None
+        self.video_duration = item.get("video_duration")
+
+    @staticmethod
+    def _best_url(candidates):
+        if not candidates:
+            return None
+        best = max(candidates, key=lambda c: (c.get("width") or 0) * (c.get("height") or 0))
+        return best.get("url")
+
+def _fetch_highlight_items_raw(cl, highlight_pk):
+    """Busca os itens de um destaque sem passar pela validacao pydantic
+    (que quebra em contas/perfis onde o Instagram omite alguns campos).
+    Retorna (titulo, [_RawStory,...])."""
+    from instagrapi import config as ig_config
+    highlight_id = f"highlight:{highlight_pk}"
+    data = {
+        "exclude_media_ids": "[]",
+        "supported_capabilities_new": json.dumps(ig_config.SUPPORTED_CAPABILITIES),
+        "source": "profile",
+        "_uid": str(cl.user_id),
+        "_uuid": cl.uuid,
+        "user_ids": [highlight_id],
+    }
+    result = cl.private_request("feed/reels_media/", data)
+    reels = result.get("reels", {})
+    if highlight_id not in reels:
+        raise ValueError("Destaque nao encontrado ou vazio")
+    raw = reels[highlight_id]
+    title = raw.get("title") or "Destaque"
+    items = [_RawStory(it) for it in raw.get("items", [])]
+    return title, items
+
 def _make_zip(target, paths):
     paths = [p for p in paths if p and os.path.exists(p)]
     if not paths:
@@ -659,18 +707,19 @@ def api_highlight_items():
         return jsonify({"ok": False, "msg": str(e)})
 
     try:
-        highlight = cl.highlight_info(highlight_id)
+        fetched_title, items = _fetch_highlight_items_raw(cl, highlight_id)
     except Exception as e:
         return jsonify({"ok": False, "msg": f"Erro ao abrir destaque: {e}"})
 
+    display_title = title or fetched_title
     cache_key = f"highlight:{highlight_id}"
     preview_cache[cache_key] = {
-        "cl": cl, "medias": list(highlight.items), "kind": "story",
-        "target": target_username, "label": f"@{target_username} › {title or highlight.title}",
-        "folder": f"{DOWNLOADS_DIR}/{target_username}/highlights/{_safe_name(title or highlight.title)}",
+        "cl": cl, "medias": items, "kind": "story",
+        "target": target_username, "label": f"@{target_username} › {display_title}",
+        "folder": f"{DOWNLOADS_DIR}/{target_username}/highlights/{_safe_name(display_title)}",
     }
 
-    return jsonify({"ok": True, "items": [_story_preview_item(s) for s in highlight.items], "cache_key": cache_key})
+    return jsonify({"ok": True, "items": [_story_preview_item(s) for s in items], "cache_key": cache_key})
 
 @app.route("/api/download-selected", methods=["POST"])
 def api_download_selected():
