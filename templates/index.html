@@ -113,6 +113,9 @@ header {
 .login-tab.active { background:var(--cyan); color:#000; border-color:var(--cyan); }
 .login-hint { text-align:left; font-size:0.78rem; color:var(--dim); margin-bottom:10px; line-height:1.5; }
 .login-hint code { background:var(--bg2); padding:1px 5px; border-radius:4px; font-size:0.75rem; }
+.login-help { text-align:left; margin-bottom:4px; }
+.login-help summary { font-size:0.78rem; color:var(--cyan); cursor:pointer; font-weight:600; }
+.login-help summary::marker { color:var(--cyan); }
 
 /* ─── BUTTONS ───────────────────────────────────────────── */
 .btn {
@@ -263,11 +266,27 @@ header {
     <!-- LOGIN POR SESSAO (like a browser) -->
     <div id="pane-session">
       <p class="login-hint">
-        1. Toque em "Abrir Instagram" e faca login normalmente, como qualquer pessoa faria.<br>
-        2. Depois de logado, copie o cookie <code>sessionid</code> (no Chrome: menu &#8942; &rarr; Configuracoes do site &rarr; Cookies &rarr; instagram.com &rarr; sessionid).<br>
-        3. Cole o valor aqui embaixo. Como o login acontece de verdade no navegador, o Instagram nao desconfia do scraper.
+        Faca login no Instagram de verdade num navegador, copie o cookie
+        <code>sessionid</code> e cole aqui embaixo. O Chrome comum do Android
+        <strong>nao mostra</strong> o valor do cookie &mdash; veja como pegar
+        no detalhe abaixo.
       </p>
-      <button class="btn btn-ghost btn-full" style="margin-bottom:10px;" onclick="window.open('https://www.instagram.com/accounts/login/','_blank')">
+      <details class="login-help">
+        <summary>❓ Como copiar o sessionid?</summary>
+        <div class="login-hint" style="margin-top:8px;">
+          <strong>📱 Direto pelo celular (sem PC):</strong><br>
+          1. Instale o <strong>Kiwi Browser</strong> (Play Store, gratis) &mdash; ele aceita extensoes de Chrome.<br>
+          2. No Kiwi: menu &#8942; &rarr; Extensoes &rarr; Chrome Web Store &rarr; busque e instale <strong>"Cookie-Editor"</strong>.<br>
+          3. No Kiwi, va em instagram.com e faca login normalmente.<br>
+          4. Toque no icone do Cookie-Editor &rarr; procure <code>sessionid</code> &rarr; toque em copiar.<br><br>
+          <strong>💻 Ou usando um computador (mais rapido):</strong><br>
+          1. Faca login no instagram.com pelo Chrome/Firefox do PC.<br>
+          2. Aperte F12 &rarr; aba "Aplicativo"/"Application" &rarr; Cookies &rarr; instagram.com.<br>
+          3. Ache <code>sessionid</code> e copie o valor.<br>
+          4. Mande esse valor pro celular (mensagem pra voce mesmo, notas, etc) e cole abaixo.
+        </div>
+      </details>
+      <button class="btn btn-ghost btn-full" style="margin:10px 0;" onclick="window.open('https://www.instagram.com/accounts/login/','_blank')">
         🌐 Abrir Instagram para fazer login
       </button>
       <input type="text" id="login-sessionid" placeholder="Cole o sessionid aqui" autocomplete="off">
