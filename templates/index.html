@@ -177,6 +177,9 @@ header {
 .input:focus { border-color:var(--cyan); }
 .input-row { display:flex; gap:8px; }
 .input-row > * { min-width:0; }
+.acc-bar { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+.acc-bar label { font-size:0.8rem; color:var(--muted); white-space:nowrap; flex-shrink:0; }
+.acc-bar select { min-width:0; }
 
 /* ─── SCROLL LIST ──────────────────────────────────────── */
 .scroll-list { max-height:240px; overflow-y:auto; }
@@ -385,8 +388,105 @@ header {
 
 <div class="main">
 
-  <!-- PAGINA: INICIO -->
-  <section class="page active" id="page-inicio">
+  <!-- PAGINA: BAIXAR (fluxo principal) -->
+  <section class="page active" id="page-baixar">
+    <div class="card">
+      <div class="acc-bar">
+        <label>Conta:</label>
+        <select class="input" id="preview-account"><option value="">Automatica</option></select>
+        <button class="btn btn-ghost btn-xs" onclick="showLogin()" style="flex-shrink:0;">+ Login</button>
+      </div>
+      <div class="input-row">
+        <input class="input" id="preview-target" placeholder="Perfil alvo (sem @)..." onkeydown="if(event.key==='Enter')searchProfile()">
+        <button class="btn btn-primary" onclick="searchProfile()" id="btn-preview-load">Buscar</button>
+      </div>
+
+      <div id="preview-tabs" class="preview-tabs" style="margin-top:12px;" hidden>
+        <button class="btn btn-ghost btn-xs preview-tab active" data-mode="posts" onclick="switchPreviewMode('posts')">📷 Posts</button>
+        <button class="btn btn-ghost btn-xs preview-tab" data-mode="stories" onclick="switchPreviewMode('stories')">⏱ Stories</button>
+        <button class="btn btn-ghost btn-xs preview-tab" data-mode="highlights" onclick="switchPreviewMode('highlights')">⭐ Destaques</button>
+      </div>
+
+      <div id="highlight-back" hidden style="margin-bottom:8px;">
+        <button class="btn btn-ghost btn-xs" onclick="backToHighlightsList()">← Destaques</button>
+        <span id="highlight-current-title" style="font-weight:600;margin-left:8px;font-size:0.85rem;"></span>
+      </div>
+      <div id="highlights-list" hidden></div>
+
+      <div id="preview-type-filter" class="preview-tabs" hidden>
+        <button class="btn btn-ghost btn-xs preview-tab type-filter active" data-type="all" onclick="setTypeFilter('all')">Todos</button>
+        <button class="btn btn-ghost btn-xs preview-tab type-filter" data-type="photo" onclick="setTypeFilter('photo')">📷 Fotos</button>
+        <button class="btn btn-ghost btn-xs preview-tab type-filter" data-type="video" onclick="setTypeFilter('video')">🎬 Videos</button>
+        <button class="btn btn-ghost btn-xs preview-tab type-filter" data-type="carousel" onclick="setTypeFilter('carousel')">🖼️+ Carrossel</button>
+      </div>
+
+      <div id="preview-actions" class="preview-actions" hidden>
+        <button class="btn btn-ghost btn-xs" onclick="selectAllPreview(true)">Selecionar tudo</button>
+        <button class="btn btn-ghost btn-xs" onclick="selectAllPreview(false)">Limpar</button>
+        <button class="btn btn-success btn-xs" onclick="downloadSelected()" id="btn-download-selected" style="margin-left:auto;">Baixar selecionados (0)</button>
+      </div>
+      <div id="preview-grid" class="preview-grid"></div>
+      <div id="preview-load-status" class="card-sub" style="text-align:center;margin-top:10px;" hidden></div>
+    </div>
+
+    <!-- PROGRESSO / CONSOLE (compartilhado: download selecionado e automatico) -->
+    <div class="card" id="log-card" style="margin-top:14px;" hidden>
+      <div class="card-header">
+        <span class="card-title">Progresso</span>
+        <button class="btn btn-danger btn-xs" id="btn-stop" onclick="stopScrape()" style="display:none;">Parar</button>
+      </div>
+      <div class="progress-wrap" id="progress-wrap" style="display:none;margin-bottom:12px;">
+        <div class="progress-top">
+          <span id="prog-msg">...</span>
+          <span id="prog-pct">0%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="prog-fill"></div>
+        </div>
+      </div>
+      <div id="preview-zip" hidden style="margin-bottom:12px;"></div>
+      <div class="log-console" id="log-console"></div>
+    </div>
+  </section>
+
+  <!-- PAGINA: CONTAS -->
+  <section class="page" id="page-contas">
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-header">
+        <span class="card-title">Contas</span>
+        <button class="btn btn-ghost btn-xs" onclick="showLogin()">+ Login</button>
+      </div>
+      <div class="input-row" style="margin-bottom:10px;">
+        <input class="input" id="new-acc-user" placeholder="Usuario...">
+        <input class="input" type="password" id="new-acc-pass" placeholder="Senha...">
+        <button class="btn btn-primary" onclick="addAccount()">Add</button>
+      </div>
+      <div class="scroll-list" id="accounts-list"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-header"><span class="card-title">Perfis alvo</span></div>
+      <div class="input-row" style="margin-bottom:10px;">
+        <input class="input" id="new-target-user" placeholder="Perfil (sem @)...">
+        <input class="input" type="number" id="new-target-pri" value="1" min="1" max="5" style="max-width:60px;flex:none;" title="Prioridade">
+        <button class="btn btn-primary" onclick="addTarget()">Add</button>
+      </div>
+      <div class="scroll-list" id="targets-list"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Download automatico</span></div>
+      <p class="card-sub" style="margin-bottom:10px;">Baixa TUDO dos alvos ativos de uma vez, sem selecionar.</p>
+      <div class="input-row" style="margin-bottom:10px;flex-wrap:wrap;">
+        <select class="input" id="scrape-account"><option value="">Todas as contas</option></select>
+        <select class="input" id="scrape-target"><option value="">Todos os alvos</option></select>
+      </div>
+      <button class="btn btn-success btn-full" id="btn-start" onclick="startScrape()">▶️ Iniciar download automatico</button>
+    </div>
+  </section>
+
+  <!-- PAGINA: BIBLIOTECA -->
+  <section class="page" id="page-biblioteca">
     <div class="grid-stats" style="margin-bottom:14px;">
       <div class="card stat-card">
         <div class="stat-icon-row"><div class="stat-icon stat-icon-green">📁</div><span class="card-title">Downloads</span></div>
@@ -421,115 +521,11 @@ header {
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin-bottom:14px;">
       <div class="card-header"><span class="card-title">Top Perfis</span></div>
-      <div class="scroll-list" id="top-profiles" style="max-height:200px;">Carregando...</div>
-    </div>
-  </section>
-
-  <!-- PAGINA: SCRAPING -->
-  <section class="page" id="page-scraping">
-    <div class="control-bar">
-      <select class="input" id="scrape-account" style="max-width:220px;">
-        <option value="">Todas as contas</option>
-      </select>
-      <select class="input" id="scrape-target" style="max-width:220px;">
-        <option value="">Todos os alvos</option>
-      </select>
-      <button class="btn btn-success btn-lg" id="btn-start" onclick="startScrape()" style="min-width:100px;">
-        Iniciar
-      </button>
-      <button class="btn btn-danger btn-lg" id="btn-stop" onclick="stopScrape()" style="display:none;min-width:100px;">
-        Parar
-      </button>
-      <div class="progress-wrap" id="progress-wrap" style="display:none;">
-        <div class="progress-top">
-          <span id="prog-msg">...</span>
-          <span id="prog-pct">0%</span>
-        </div>
-        <div class="progress-track">
-          <div class="progress-fill" id="prog-fill"></div>
-        </div>
-      </div>
+      <div class="scroll-list" id="top-profiles" style="max-height:160px;">Carregando...</div>
     </div>
 
-    <div class="card" id="log-card" hidden>
-      <div class="card-header">
-        <span class="card-title">Console</span>
-        <button class="btn btn-ghost btn-xs" onclick="document.getElementById('log-console').innerHTML=''">Limpar</button>
-      </div>
-      <div class="log-console" id="log-console"></div>
-    </div>
-  </section>
-
-  <!-- PAGINA: BUSCAR / PRE-VISUALIZAR -->
-  <section class="page" id="page-buscar">
-    <div class="card">
-      <div class="card-header"><span class="card-title">Pre-visualizar e selecionar</span></div>
-      <div class="input-row" style="margin-bottom:10px;">
-        <input class="input" id="preview-target" placeholder="Perfil (sem @)...">
-        <button class="btn btn-primary" onclick="searchProfile()" id="btn-preview-load">Buscar</button>
-      </div>
-
-      <div id="preview-tabs" class="preview-tabs" hidden>
-        <button class="btn btn-ghost btn-xs preview-tab active" data-mode="posts" onclick="switchPreviewMode('posts')">📷 Posts</button>
-        <button class="btn btn-ghost btn-xs preview-tab" data-mode="stories" onclick="switchPreviewMode('stories')">⏱ Stories</button>
-        <button class="btn btn-ghost btn-xs preview-tab" data-mode="highlights" onclick="switchPreviewMode('highlights')">⭐ Destaques</button>
-      </div>
-
-      <div id="highlight-back" hidden style="margin-bottom:8px;">
-        <button class="btn btn-ghost btn-xs" onclick="backToHighlightsList()">← Destaques</button>
-        <span id="highlight-current-title" style="font-weight:600;margin-left:8px;font-size:0.85rem;"></span>
-      </div>
-      <div id="highlights-list" hidden></div>
-
-      <div id="preview-type-filter" class="preview-tabs" hidden>
-        <button class="btn btn-ghost btn-xs preview-tab type-filter active" data-type="all" onclick="setTypeFilter('all')">Todos</button>
-        <button class="btn btn-ghost btn-xs preview-tab type-filter" data-type="photo" onclick="setTypeFilter('photo')">📷 Fotos</button>
-        <button class="btn btn-ghost btn-xs preview-tab type-filter" data-type="video" onclick="setTypeFilter('video')">🎬 Videos</button>
-        <button class="btn btn-ghost btn-xs preview-tab type-filter" data-type="carousel" onclick="setTypeFilter('carousel')">🖼️+ Carrossel</button>
-      </div>
-
-      <div id="preview-actions" class="preview-actions" hidden>
-        <button class="btn btn-ghost btn-xs" onclick="selectAllPreview(true)">Selecionar tudo</button>
-        <button class="btn btn-ghost btn-xs" onclick="selectAllPreview(false)">Limpar selecao</button>
-        <button class="btn btn-success btn-xs" onclick="downloadSelected()" id="btn-download-selected" style="margin-left:auto;">Baixar selecionados (0)</button>
-      </div>
-      <div id="preview-zip" hidden style="margin-bottom:10px;"></div>
-      <div id="preview-grid" class="preview-grid"></div>
-      <div id="preview-load-status" class="card-sub" style="text-align:center;margin-top:10px;" hidden></div>
-    </div>
-  </section>
-
-  <!-- PAGINA: CONTAS -->
-  <section class="page" id="page-contas">
-    <div class="grid2" style="margin-bottom:14px;">
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">Contas</span>
-          <button class="btn btn-ghost btn-xs" onclick="showLogin()">+ Login</button>
-        </div>
-        <div class="input-row" style="margin-bottom:10px;">
-          <input class="input" id="new-acc-user" placeholder="Usuario...">
-          <input class="input" type="password" id="new-acc-pass" placeholder="Senha...">
-          <button class="btn btn-primary" onclick="addAccount()">Add</button>
-        </div>
-        <div class="scroll-list" id="accounts-list"></div>
-      </div>
-      <div class="card">
-        <div class="card-header"><span class="card-title">Alvos</span><span></span></div>
-        <div class="input-row" style="margin-bottom:10px;">
-          <input class="input" id="new-target-user" placeholder="Perfil (sem @)...">
-          <input class="input" type="number" id="new-target-pri" value="1" min="1" max="5" style="max-width:60px;flex:none;" title="Prioridade">
-          <button class="btn btn-primary" onclick="addTarget()">Add</button>
-        </div>
-        <div class="scroll-list" id="targets-list"></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- PAGINA: ARQUIVOS -->
-  <section class="page" id="page-arquivos">
     <div class="card">
       <div class="card-header">
         <span class="card-title">Arquivos</span>
@@ -543,20 +539,14 @@ header {
 
 <!-- NAVEGACAO INFERIOR -->
 <nav class="bottom-nav">
-  <button class="nav-btn active" data-page="inicio" onclick="showPage('inicio')">
-    <span class="nav-icon">🏠</span><span class="nav-label">Inicio</span>
-  </button>
-  <button class="nav-btn" data-page="scraping" onclick="showPage('scraping')">
-    <span class="nav-icon">▶️</span><span class="nav-label">Scraping</span>
-  </button>
-  <button class="nav-btn" data-page="buscar" onclick="showPage('buscar')">
-    <span class="nav-icon">🔍</span><span class="nav-label">Buscar</span>
+  <button class="nav-btn active" data-page="baixar" onclick="showPage('baixar')">
+    <span class="nav-icon">🔍</span><span class="nav-label">Baixar</span>
   </button>
   <button class="nav-btn" data-page="contas" onclick="showPage('contas')">
     <span class="nav-icon">👤</span><span class="nav-label">Contas</span>
   </button>
-  <button class="nav-btn" data-page="arquivos" onclick="showPage('arquivos')">
-    <span class="nav-icon">📁</span><span class="nav-label">Arquivos</span>
+  <button class="nav-btn" data-page="biblioteca" onclick="showPage('biblioteca')">
+    <span class="nav-icon">📚</span><span class="nav-label">Biblioteca</span>
   </button>
 </nav>
 
@@ -573,6 +563,17 @@ const api = (path, opts={}) => fetch(path, {
 let pollInterval = null;
 let loggedIn = false;
 let currentUser = '';
+
+// preenche um <select> preservando a opcao que ja estava escolhida
+function fillSelect(el, firstLabel, accounts) {
+  const prev = el.value;
+  let html = `<option value="">${firstLabel}</option>`;
+  (accounts||[]).forEach((a, i) => {
+    if (a.active !== false) html += `<option value="${i}">@${a.username}</option>`;
+  });
+  el.innerHTML = html;
+  if ([...el.options].some(o => o.value === prev)) el.value = prev;
+}
 
 // ─── NAVEGACAO (paginas) ──────────────────────────────────────────────────────
 function showPage(name) {
@@ -716,7 +717,7 @@ async function startScrape() {
   if (tgtVal !== '') body.target_index = parseInt(tgtVal);
   const r = await api('/api/scrape', {method:'POST', body:JSON.stringify(body)});
   if (r.ok) {
-    $('btn-start').style.display = 'none';
+    $('btn-start').disabled = true;
     $('btn-stop').style.display = '';
     $('btn-stop').disabled = false;
     $('progress-wrap').style.display = '';
@@ -725,6 +726,8 @@ async function startScrape() {
     $('prog-pct').textContent = '0%';
     $('prog-msg').textContent = 'Iniciando...';
     toast(r.msg);
+    showPage('baixar');
+    $('log-card').scrollIntoView({behavior:'smooth', block:'nearest'});
   } else {
     toast(r.msg, 'err');
   }
@@ -746,7 +749,7 @@ let highlightsList = [];
 let lastZipUrl = null;
 
 function previewAccountBody() {
-  const accVal = $('scrape-account').value;
+  const accVal = $('preview-account').value;
   const body = {target_username: previewTarget};
   if (accVal !== '') body.account_index = parseInt(accVal);
   return body;
@@ -966,8 +969,10 @@ async function downloadSelected() {
   if (r.ok) {
     $('log-card').hidden = false;
     $('progress-wrap').style.display = '';
+    $('btn-stop').style.display = '';
+    $('btn-stop').disabled = false;
     toast(r.msg);
-    showPage('scraping');
+    $('log-card').scrollIntoView({behavior:'smooth', block:'nearest'});
   } else {
     toast(r.msg, 'err');
   }
@@ -977,7 +982,7 @@ async function downloadSelected() {
 function pollStatus() {
   api('/api/status').then(s => {
     if (s.running) {
-      $('btn-start').style.display = 'none';
+      $('btn-start').disabled = true;
       $('btn-stop').style.display = '';
       $('progress-wrap').style.display = '';
       $('log-card').hidden = false;
@@ -999,7 +1004,7 @@ function pollStatus() {
         lc.scrollTop = lc.scrollHeight;
       });
     } else {
-      $('btn-start').style.display = '';
+      $('btn-start').disabled = false;
       $('btn-stop').style.display = 'none';
       $('btn-stop').disabled = false;
       $('progress-wrap').style.display = 'none';
@@ -1071,12 +1076,9 @@ async function refreshAll() {
   });
   $('accounts-list').innerHTML = ahtml || '<div class="empty"><div class="icon">👤</div><p>Nenhuma conta adicionada</p></div>';
 
-  // Select de contas
-  const selAcc = $('scrape-account');
-  selAcc.innerHTML = '<option value="">Todas as contas</option>';
-  (accs.accounts||[]).forEach((a, i) => {
-    if (a.active !== false) selAcc.innerHTML += `<option value="${i}">@${a.username}</option>`;
-  });
+  // Selects de conta (busca manual usa "Automatica", auto usa "Todas as contas")
+  fillSelect($('preview-account'), 'Automatica', accs.accounts);
+  fillSelect($('scrape-account'), 'Todas as contas', accs.accounts);
 
   // Targets
   const tgt = await api('/api/targets');
@@ -1094,12 +1096,8 @@ async function refreshAll() {
   });
   $('targets-list').innerHTML = thtml || '<div class="empty"><div class="icon">🎯</div><p>Nenhum alvo adicionado</p></div>';
 
-  // Select de alvos
-  const selTgt = $('scrape-target');
-  selTgt.innerHTML = '<option value="">Todos os alvos</option>';
-  (tgt.targets||[]).forEach((t, i) => {
-    if (t.active !== false) selTgt.innerHTML += `<option value="${i}">@${t.username}</option>`;
-  });
+  // Select de alvos (para o download automatico)
+  fillSelect($('scrape-target'), 'Todos os alvos', tgt.targets);
 
   // Chart
   const daily = stats.daily||{};
