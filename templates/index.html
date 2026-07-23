@@ -108,6 +108,11 @@ header {
 }
 .login-box input:focus { border-color:var(--cyan); }
 .login-box input::placeholder { color:var(--muted); }
+.login-tabs { display:flex; gap:6px; margin-bottom:14px; }
+.login-tab { flex:1; }
+.login-tab.active { background:var(--cyan); color:#000; border-color:var(--cyan); }
+.login-hint { text-align:left; font-size:0.78rem; color:var(--dim); margin-bottom:10px; line-height:1.5; }
+.login-hint code { background:var(--bg2); padding:1px 5px; border-radius:4px; font-size:0.75rem; }
 
 /* ─── BUTTONS ───────────────────────────────────────────── */
 .btn {
@@ -249,11 +254,40 @@ header {
     <div class="icon">🔐</div>
     <h2>Login no Instagram</h2>
     <p>Use uma conta descartavel para comecar a baixar</p>
-    <input type="text" id="login-user" placeholder="Usuario" autocomplete="off">
-    <input type="password" id="login-pass" placeholder="Senha">
-    <button class="btn btn-primary btn-full btn-lg" onclick="doLogin()" id="btn-login">
-      Entrar no Instagram
-    </button>
+
+    <div class="login-tabs">
+      <button class="btn btn-ghost btn-xs login-tab active" id="tab-session" onclick="setLoginTab('session')">🍪 Sessao (recomendado)</button>
+      <button class="btn btn-ghost btn-xs login-tab" id="tab-password" onclick="setLoginTab('password')">🔑 Usuario e senha</button>
+    </div>
+
+    <!-- LOGIN POR SESSAO (like a browser) -->
+    <div id="pane-session">
+      <p class="login-hint">
+        1. Toque em "Abrir Instagram" e faca login normalmente, como qualquer pessoa faria.<br>
+        2. Depois de logado, copie o cookie <code>sessionid</code> (no Chrome: menu &#8942; &rarr; Configuracoes do site &rarr; Cookies &rarr; instagram.com &rarr; sessionid).<br>
+        3. Cole o valor aqui embaixo. Como o login acontece de verdade no navegador, o Instagram nao desconfia do scraper.
+      </p>
+      <button class="btn btn-ghost btn-full" style="margin-bottom:10px;" onclick="window.open('https://www.instagram.com/accounts/login/','_blank')">
+        🌐 Abrir Instagram para fazer login
+      </button>
+      <input type="text" id="login-sessionid" placeholder="Cole o sessionid aqui" autocomplete="off">
+      <button class="btn btn-primary btn-full btn-lg" onclick="doSessionLogin()" id="btn-session-login">
+        Entrar com sessao
+      </button>
+    </div>
+
+    <!-- LOGIN POR USUARIO/SENHA (fallback) -->
+    <div id="pane-password" hidden>
+      <input type="text" id="login-user" placeholder="Usuario" autocomplete="off">
+      <input type="password" id="login-pass" placeholder="Senha">
+      <button class="btn btn-primary btn-full btn-lg" onclick="doLogin()" id="btn-login">
+        Entrar no Instagram
+      </button>
+      <p class="login-hint" style="margin-top:8px;margin-bottom:0;">
+        Menos confiavel: o Instagram costuma bloquear esse tipo de login em contas novas/descartaveis.
+      </p>
+    </div>
+
     <div style="margin-top:16px;font-size:0.78rem;color:var(--muted);">
       <button class="btn btn-ghost btn-xs" onclick="skipLogin()">Pular (usar contas salvas)</button>
     </div>
@@ -410,8 +444,43 @@ function toast(msg, type='ok') {
 }
 
 // ─── LOGIN ───────────────────────────────────────────────────────────────────
-function showLogin() { $('overlay').classList.remove('hidden'); $('login-user').focus(); }
+function showLogin() { $('overlay').classList.remove('hidden'); }
 function skipLogin() { $('overlay').classList.add('hidden'); }
+
+function setLoginTab(tab) {
+  const isSession = tab === 'session';
+  $('tab-session').classList.toggle('active', isSession);
+  $('tab-password').classList.toggle('active', !isSession);
+  $('pane-session').hidden = !isSession;
+  $('pane-password').hidden = isSession;
+  (isSession ? $('login-sessionid') : $('login-user')).focus();
+}
+
+async function doSessionLogin() {
+  const sid = $('login-sessionid').value.trim();
+  if (!sid) return toast('Cole o sessionid copiado do navegador', 'err');
+
+  $('btn-session-login').disabled = true;
+  $('btn-session-login').textContent = 'Conectando...';
+
+  const r = await api('/api/login-session', {method:'POST', body:JSON.stringify({sessionid:sid})});
+  $('btn-session-login').disabled = false;
+  $('btn-session-login').textContent = 'Entrar com sessao';
+
+  if (r.ok) {
+    loggedIn = true;
+    currentUser = r.username;
+    $('overlay').classList.add('hidden');
+    $('header-badge').className = 'status-badge online';
+    $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+r.username;
+    $('s-session-text').textContent = 'On';
+    $('s-session-user').textContent = '@'+r.username;
+    toast(r.msg);
+    refreshAll();
+  } else {
+    toast(r.msg, 'err');
+  }
+}
 
 async function doLogin() {
   const u = $('login-user').value.trim();
@@ -591,8 +660,9 @@ async function refreshAll() {
   (accs.accounts||[]).forEach((a, i) => {
     const active = a.active !== false;
     const dot = active ? '🟢' : '⚫';
+    const method = a.sessionid ? '🍪 sessao' : '🔑 senha';
     ahtml += `<div class="list-item" style="opacity:${active?1:0.5}">
-      <div class="info"><div class="name">${dot} @${a.username}</div><div class="meta">${a.last_use||'Nunca'}</div></div>
+      <div class="info"><div class="name">${dot} @${a.username}</div><div class="meta">${method} &middot; ${a.last_use||'Nunca'}</div></div>
       <div class="actions">
         <button class="btn btn-ghost btn-xs" onclick="toggleAccount(${i})">${active?'Off':'On'}</button>
         <button class="btn btn-danger btn-xs" onclick="delAccount(${i})">X</button>

@@ -7,6 +7,7 @@ python app.py  ->  http://localhost:5000
 import os, json, time, threading, sqlite3, random
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_from_directory
+from ig_auth import login_account, login_by_sessionid, translate_ig_error
 
 app = Flask(__name__)
 
@@ -100,6 +101,23 @@ def get_cfg():
     return jload(CONFIG_PATH, {"delay_min": 3, "delay_max": 10, "posts_per_profile": 15,
                                 "auto_interval": 3600, "max_downloads_per_day": 500})
 
+def upsert_account(username, password=None, sessionid=None):
+    accs = jload(ACCOUNTS_PATH)
+    accounts = accs.setdefault("accounts", [])
+    acc = next((a for a in accounts if a["username"] == username), None)
+    if acc is None:
+        acc = {"username": username, "active": True, "created_at": datetime.now().isoformat()}
+        accounts.append(acc)
+    if password:
+        acc["password"] = password
+        acc.pop("sessionid", None)
+    if sessionid:
+        acc["sessionid"] = sessionid
+        acc.pop("password", None)
+    acc["active"] = True
+    acc["last_use"] = datetime.now().isoformat()
+    jsave(ACCOUNTS_PATH, accs)
+
 # ─── SCRAPING ENGINE ──────────────────────────────────────────────────────────
 scrape_state = {"running": False, "connected": False, "current_account": "",
                 "message": "Pronto", "progress": 0, "total": 0, "current": "", "logs": [],
@@ -167,36 +185,22 @@ def _do_scrape(account_index=None, target_index=None):
                 continue
 
             un = acc.get('username')
-            pw = acc.get('password')
-            if not un or not pw:
-                _add_log("Conta invalida (sem usuario/senha)", "error")
+            if not un or not (acc.get('password') or acc.get('sessionid')):
+                _add_log("Conta invalida (sem usuario/senha/sessao)", "error")
                 continue
             scrape_state["current_account"] = un
             scrape_state["message"] = f"Conectando @{un}..."
             _add_log(f"Tentando login em @{un}...")
 
-            # Tentar importar instagrapi
             try:
-                from instagrapi import Client as IGClient
-                from instagrapi.exceptions import LoginRequired, PleaseWaitFewMinutes, ClientError
-                cl = IGClient()
                 sf = f"{SESSIONS_DIR}/{un}.json"
-                if os.path.exists(sf):
-                    try:
-                        cl.load_settings(sf)
-                        cl.login(un, pw)
-                    except:
-                        cl.login(un, pw)
-                        cl.dump_settings(sf)
-                else:
-                    cl.login(un, pw)
-                    cl.dump_settings(sf)
-
+                cl = login_account(acc, sf)
                 scrape_state["connected"] = True
                 _add_log(f"Login OK @{un}")
             except Exception as e:
-                _add_log(f"Falha login @{un}: {e}", "error")
-                scrape_state["message"] = f"Falha login @{un}"
+                msg = translate_ig_error(e)
+                _add_log(f"Falha login @{un}: {msg}", "error")
+                scrape_state["message"] = f"Falha login @{un}: {msg}"
                 continue
 
             for tgt in active_targets:
@@ -306,42 +310,39 @@ def api_login():
     if not username or not password:
         return jsonify({"ok": False, "msg": "Preencha todos os campos"})
 
+    sf = f"{SESSIONS_DIR}/{username}.json"
     try:
-        from instagrapi import Client as IGClient
-        cl = IGClient()
-        sf = f"{SESSIONS_DIR}/{username}.json"
-        if os.path.exists(sf):
-            try:
-                cl.load_settings(sf)
-                cl.login(username, password)
-            except:
-                cl.login(username, password)
-                cl.dump_settings(sf)
-        else:
-            cl.login(username, password)
-            cl.dump_settings(sf)
+        login_account({"username": username, "password": password}, sf)
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"Falha no login: {e}"})
+        return jsonify({"ok": False, "msg": translate_ig_error(e)})
 
-    accs = jload(ACCOUNTS_PATH)
-    found = False
-    for a in accs.get("accounts", []):
-        if a["username"] == username:
-            a["last_use"] = datetime.now().isoformat()
-            a["active"] = True
-            found = True
-            break
-    if not found:
-        accs.setdefault("accounts", []).append({
-            "username": username, "password": password, "active": True,
-            "created_at": datetime.now().isoformat(), "last_use": datetime.now().isoformat()
-        })
-    jsave(ACCOUNTS_PATH, accs)
+    upsert_account(username, password=password)
 
     global scrape_state
     scrape_state["connected"] = True
     scrape_state["current_account"] = username
     return jsonify({"ok": True, "msg": f"Conectado como @{username}", "username": username})
+
+@app.route("/api/login-session", methods=["POST"])
+def api_login_session():
+    data = request.get_json() or {}
+    sessionid = (data.get("sessionid") or "").strip()
+    if not sessionid:
+        return jsonify({"ok": False, "msg": "Cole o sessionid copiado do navegador"})
+
+    try:
+        cl = login_by_sessionid(sessionid)
+    except Exception as e:
+        return jsonify({"ok": False, "msg": translate_ig_error(e)})
+
+    username = cl.username
+    cl.dump_settings(f"{SESSIONS_DIR}/{username}.json")
+    upsert_account(username, sessionid=sessionid)
+
+    global scrape_state
+    scrape_state["connected"] = True
+    scrape_state["current_account"] = username
+    return jsonify({"ok": True, "msg": f"Conectado como @{username} (via sessao)", "username": username})
 
 @app.route("/api/logout", methods=["POST"])
 def api_logout():

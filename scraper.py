@@ -4,6 +4,7 @@ from datetime import datetime
 from instagrapi import Client
 from instagrapi.exceptions import LoginRequired, PleaseWaitFewMinutes, ClientError
 from rich.console import Console
+from ig_auth import login_account, translate_ig_error
 
 
 console = Console()
@@ -17,34 +18,17 @@ class InstagramScraper:
         self.current_account = None
         self.total_downloaded = 0
         self.total_errors = 0
-    
+
     def login(self, account):
-        username, password = account['username'], account['password']
+        username = account['username']
         self.current_account = username
+        session_file = f"sessions/{username}.json"
         try:
-            client = Client()
-            session_file = f"sessions/{username}.json"
-            
-            if os.path.exists(session_file):
-                try:
-                    client.load_settings(session_file)
-                    client.login(username, password)
-                    console.print(f"[green]✅ Sessão carregada: @{username}[/green]")
-                except:
-                    client.login(username, password)
-                    os.makedirs("sessions", exist_ok=True)
-                    client.dump_settings(session_file)
-                    console.print(f"[green]✅ Login: @{username}[/green]")
-            else:
-                os.makedirs("sessions", exist_ok=True)
-                client.login(username, password)
-                client.dump_settings(session_file)
-                console.print(f"[green]✅ Login: @{username}[/green]")
-            
-            self.client = client
+            self.client = login_account(account, session_file)
+            console.print(f"[green]✅ Login: @{username}[/green]")
             return True
         except Exception as e:
-            console.print(f"[red]❌ Erro @{username}: {e}[/red]")
+            console.print(f"[red]❌ Erro @{username}: {translate_ig_error(e)}[/red]")
             return False
     
     def human_delay(self, min_sec=None, max_sec=None):
