@@ -591,13 +591,13 @@ def api_preview():
     try:
         cl = _get_client(data.get("account_index"))
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
+        return jsonify({"ok": False, "msg": translate_ig_error(e)})
 
     try:
         uid = cl.user_id_from_username(target_username)
         medias, end_cursor = cl.user_medias_paginated(uid, amount=PREVIEW_PAGE_SIZE)
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"Erro ao buscar @{target_username}: {e}"})
+        return jsonify({"ok": False, "msg": f"Erro ao buscar @{target_username}: {translate_ig_error(e)}"})
 
     cache_key = target_username
     preview_cache[cache_key] = {
@@ -627,7 +627,7 @@ def api_preview_more():
         medias, end_cursor = cache["cl"].user_medias_paginated(
             cache["uid"], amount=PREVIEW_PAGE_SIZE, end_cursor=cache["end_cursor"])
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"Erro ao buscar mais midias: {e}"})
+        return jsonify({"ok": False, "msg": f"Erro ao buscar mais midias: {translate_ig_error(e)}"})
 
     cache["medias"].extend(medias)
     cache["end_cursor"] = end_cursor
@@ -648,13 +648,13 @@ def api_stories():
     try:
         cl = _get_client(data.get("account_index"))
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
+        return jsonify({"ok": False, "msg": translate_ig_error(e)})
 
     try:
         uid = cl.user_id_from_username(target_username)
         stories = cl.user_stories(uid)
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"Erro ao buscar stories de @{target_username}: {e}"})
+        return jsonify({"ok": False, "msg": f"Erro ao buscar stories de @{target_username}: {translate_ig_error(e)}"})
 
     cache_key = f"{target_username}:stories"
     preview_cache[cache_key] = {
@@ -676,13 +676,13 @@ def api_highlights():
     try:
         cl = _get_client(data.get("account_index"))
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
+        return jsonify({"ok": False, "msg": translate_ig_error(e)})
 
     try:
         uid = cl.user_id_from_username(target_username)
         highlights = cl.user_highlights(uid)
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"Erro ao buscar destaques de @{target_username}: {e}"})
+        return jsonify({"ok": False, "msg": f"Erro ao buscar destaques de @{target_username}: {translate_ig_error(e)}"})
 
     items = [{
         "id": str(h.pk),
@@ -704,12 +704,12 @@ def api_highlight_items():
     try:
         cl = _get_client(data.get("account_index"))
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
+        return jsonify({"ok": False, "msg": translate_ig_error(e)})
 
     try:
         fetched_title, items = _fetch_highlight_items_raw(cl, highlight_id)
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"Erro ao abrir destaque: {e}"})
+        return jsonify({"ok": False, "msg": f"Erro ao abrir destaque: {translate_ig_error(e)}"})
 
     display_title = title or fetched_title
     cache_key = f"highlight:{highlight_id}"

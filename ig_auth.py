@@ -58,6 +58,10 @@ _FRIENDLY_ERRORS = [
 
 def translate_ig_error(e: Exception) -> str:
     """Maps an instagrapi exception to a short, actionable pt-BR message."""
+    if isinstance(e, ValueError):
+        # mensagens que a gente mesmo criou (ex: "Nenhuma conta cadastrada"),
+        # ja estao prontas pra exibir, sem precisar de tradução
+        return str(e)
     for exc_type, msg in _FRIENDLY_ERRORS:
         if isinstance(e, exc_type):
             return msg
