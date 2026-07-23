@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IG-Scraper-Pro v3.0</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --dim: #8b949e;
+  --green: #3fb950;
+  --blue: #58a6ff;
+  --red: #f85149;
+  --yellow: #d2991d;
+  --purple: #a371f7;
+  --cyan: #39d2c0;
+  --radius: 10px;
+  --shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg); color: var(--text);
+  min-height: 100vh;
+}
+header {
+  background: var(--card); border-bottom: 1px solid var(--border);
+  padding: 14px 24px; display:flex; justify-content:space-between; align-items:center;
+  position: sticky; top:0; z-index:100;
+}
+header h1 { font-size:1.2rem; color:var(--cyan); }
+header .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+.dot.online { background:var(--green); }
+.dot.offline { background:var(--red); }
+.dot.busy { background:var(--yellow); animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+.container { max-width:1100px; margin:0 auto; padding:20px 16px; }
+.grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+.grid3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px; }
+.card {
+  background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+  padding:20px; box-shadow:var(--shadow);
+}
+.card h3 { font-size:.9rem; color:var(--dim); margin-bottom:12px; text-transform:uppercase; letter-spacing:1px; }
+.card h2 { font-size:2rem; font-weight:700; }
+.badge {
+  display:inline-block; padding:3px 10px; border-radius:20px; font-size:.75rem; font-weight:600;
+}
+.badge-green { background:#1b4d2e; color:var(--green); }
+.badge-red { background:#4d1b1b; color:var(--red); }
+.badge-blue { background:#1b2e4d; color:var(--blue); }
+
+input, select, button {
+  background:var(--bg); color:var(--text); border:1px solid var(--border);
+  padding:10px 14px; border-radius:6px; font-size:.88rem; outline:none;
+  transition: border-color .2s;
+}
+input:focus, select:focus { border-color:var(--blue); }
+button {
+  cursor:pointer; font-weight:600; border:none;
+  transition: transform .1s, opacity .2s;
+}
+button:active { transform:scale(0.97); }
+button:disabled { opacity:0.5; cursor:not-allowed; }
+.btn-green { background:var(--green); color:#000; }
+.btn-blue { background:var(--blue); color:#000; }
+.btn-red { background:var(--red); color:#fff; }
+.btn-yellow { background:var(--yellow); color:#000; }
+.btn-card { background:var(--card); border:1px solid var(--border); color:var(--text); }
+.btn-sm { padding:6px 12px; font-size:.78rem; border-radius:4px; }
+.btn-lg { padding:14px 28px; font-size:1rem; border-radius:8px; }
+
+.form-row { display:flex; gap:10px; margin-bottom:10px; }
+.form-row input, .form-row select { flex:1; }
+
+table { width:100%; border-collapse:collapse; font-size:.85rem; }
+th, td { padding:8px 12px; text-align:left; border-bottom:1px solid var(--border); }
+th { color:var(--dim); font-weight:600; font-size:.75rem; text-transform:uppercase; }
+tbody tr:hover { background:rgba(255,255,255,0.02); }
+
+.progress-bar {
+  width:100%; height:6px; background:var(--border); border-radius:3px; overflow:hidden; margin:8px 0;
+}
+.progress-fill {
+  height:100%; background:var(--green); border-radius:3px; transition: width .3s;
+}
+
+.toast {
+  position:fixed; bottom:20px; right:20px; padding:12px 20px; border-radius:8px;
+  color:#fff; font-weight:600; z-index:999; animation: slideIn .3s;
+}
+.toast-success { background:var(--green); }
+.toast-error { background:var(--red); }
+@keyframes slideIn { from { transform:translateX(100%); opacity:0; } to { transform:translateX(0); opacity:1; } }
+
+.tabs { display:flex; gap:4px; margin-bottom:16px; }
+.tab {
+  padding:8px 18px; background:transparent; color:var(--dim); border:1px solid var(--border);
+  border-radius:6px 6px 0 0; cursor:pointer; font-size:.85rem; border-bottom:none;
+}
+.tab.active { color:var(--cyan); background:var(--card); border-color:var(--cyan); }
+
+.download-card {
+  display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border);
+}
+.download-card:last-child { border-bottom:none; }
+.download-card .thumb {
+  width:42px; height:42px; border-radius:6px; background:var(--border);
+  display:flex; align-items:center; justify-content:center; font-size:1.2rem; flex-shrink:0;
+}
+
+.chart-bar { display:flex; align-items:center; gap:8px; margin-bottom:4px; font-size:.8rem; }
+.chart-bar .bar { height:20px; border-radius:4px; background:var(--green); min-width:2px; transition: width .5s; }
+.chart-bar .bar.low { background:var(--red); }
+.chart-bar .bar.mid { background:var(--yellow); }
+
+.chip { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; background:var(--border); border-radius:12px; font-size:.72rem; }
+.chip button { background:none; border:none; color:var(--red); cursor:pointer; padding:0; font-size:1rem; line-height:1; }
+
+.log-line {
+  padding:4px 8px; font-size:.78rem; font-family:monospace; border-left:3px solid var(--border);
+  margin-bottom:2px;
+}
+.log-line.success { border-color:var(--green); color:var(--green); }
+.log-line.error { border-color:var(--red); color:var(--red); }
+
+/* Login overlay */
+.overlay {
+  position:fixed; inset:0; background:var(--bg); z-index:200;
+  display:flex; align-items:center; justify-content:center; flex-direction:column;
+}
+.overlay-card {
+  background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+  padding:32px; width:100%; max-width:380px; box-shadow:var(--shadow); text-align:center;
+}
+.overlay-card h2 { color:var(--cyan); margin-bottom:8px; }
+.overlay-card p { color:var(--dim); font-size:.85rem; margin-bottom:20px; }
+.overlay-card input { width:100%; margin-bottom:10px; }
+.overlay-card button { width:100%; }
+
+@media (max-width:768px) {
+  .grid2, .grid3 { grid-template-columns: 1fr; }
+  header { padding:10px 16px; }
+  header h1 { font-size:1rem; }
+  .container { padding:12px 10px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <span id="status-dot" class="dot offline"></span>
+    <h1 style="display:inline;vertical-align:middle;">📸 IG-Scraper-Pro v3.0</h1>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span id="header-status" style="font-size:.8rem;color:var(--dim);">Pronto</span>
+    <button class="btn-red btn-sm" onclick="resetDB()" style="font-size:.7rem;">🗑 Reset</button>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- LOGIN -->
+  <div class="card" style="margin-bottom:16px;" id="login-section">
+    <h3>🔐 Login no Instagram</h3>
+    <div class="form-row">
+      <input type="text" id="login-user" placeholder="Usuário">
+      <input type="password" id="login-pass" placeholder="Senha">
+      <button class="btn-green" onclick="doLogin()">Entrar</button>
+    </div>
+  </div>
+
+  <!-- CONTAS E TARGETS -->
+  <div class="grid2" style="margin-bottom:16px;">
+    <div class="card" id="accounts-card">
+      <h3>📋 Contas Salvas</h3>
+      <div id="accounts-list" style="max-height:200px;overflow-y:auto;"></div>
+      <div class="form-row" style="margin-top:10px;">
+        <input type="text" id="new-acc-user" placeholder="Usuário">
+        <input type="password" id="new-acc-pass" placeholder="Senha">
+        <button class="btn-card btn-sm" onclick="addAccount()">+ Adicionar</button>
+      </div>
+    </div>
+    <div class="card" id="targets-card">
+      <h3>🎯 Perfis Alvo</h3>
+      <div id="targets-list" style="max-height:200px;overflow-y:auto;"></div>
+      <div class="form-row" style="margin-top:10px;">
+        <input type="text" id="new-target-user" placeholder="Usuário (sem @)">
+        <input type="number" id="new-target-pri" value="1" min="1" max="5" style="width:60px;flex:none;">
+        <button class="btn-card btn-sm" onclick="addTarget()">+ Adicionar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONTROLES DE SCRAPING -->
+  <div class="card" style="margin-bottom:16px;text-align:center;">
+    <div style="display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;">
+      <select id="scrape-account" style="min-width:200px;">
+        <option value="">Todas as contas</option>
+      </select>
+      <button class="btn-green btn-lg" id="btn-scrape" onclick="startScrape()">▶️ Iniciar Scraping</button>
+      <button class="btn-red btn-lg" id="btn-stop" onclick="stopScrape()" style="display:none;">⏹ Parar</button>
+    </div>
+    <div id="scrape-progress" style="display:none;margin-top:12px;">
+      <div style="display:flex;justify-content:space-between;font-size:.8rem;margin-bottom:4px;">
+        <span id="scrape-msg">...</span>
+        <span id="scrape-pct">0%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill" style="width:0%;"></div>
+      </div>
+      <div id="scrape-current" style="font-size:.75rem;color:var(--dim);text-align:left;"></div>
+    </div>
+    <div id="scrape-logs" style="margin-top:10px;max-height:120px;overflow-y:auto;text-align:left;"></div>
+  </div>
+
+  <!-- STATS -->
+  <div class="grid3" style="margin-bottom:16px;" id="stats-grid">
+    <div class="card"><h3>📁 Total Downloads</h3><h2 id="stat-total" style="color:var(--green);">0</h2></div>
+    <div class="card"><h3>👤 Perfis</h3><h2 id="stat-profiles" style="color:var(--blue);">0</h2></div>
+    <div class="card"><h3>💾 Espaço</h3><h2 id="stat-disk" style="color:var(--purple);">0 GB</h2></div>
+  </div>
+
+  <!-- GRAFICO + DOWNLOADS -->
+  <div class="grid2" style="margin-bottom:16px;">
+    <div class="card">
+      <h3>📈 Atividade (7 dias)</h3>
+      <div id="chart-7days" style="min-height:160px;color:var(--dim);">Carregando...</div>
+    </div>
+    <div class="card">
+      <h3>📁 Downloads Recentes</h3>
+      <div id="recent-list" style="max-height:160px;overflow-y:auto;color:var(--dim);">Carregando...</div>
+    </div>
+  </div>
+
+  <!-- TOP PERFIS -->
+  <div class="card" style="margin-bottom:16px;">
+    <h3>🏆 Top Perfis</h3>
+    <div id="top-profiles" style="color:var(--dim);">Carregando...</div>
+  </div>
+
+  <!-- TODOS OS DOWNLOADS -->
+  <div class="card" style="margin-bottom:16px;">
+    <h3>📂 Todos os Arquivos</h3>
+    <div id="all-files" style="max-height:300px;overflow-y:auto;color:var(--dim);">Carregando...</div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+const API = (path, opts={}) => fetch(path, {...opts, headers:{'Content-Type':'application/json',...opts.headers}}).then(r=>r.json());
+
+let pollTimer = null;
+let scrapeRunning = false;
+
+// ─── TOAST ─────────────────────────────────────────────────
+function toast(msg, type='success') {
+  const t = document.getElementById('toast');
+  t.className = `toast toast-${type}`;
+  t.textContent = msg;
+  setTimeout(() => t.className='', 3000);
+}
+
+// ─── LOGIN ──────────────────────────────────────────────────
+async function doLogin() {
+  const u = document.getElementById('login-user').value.trim();
+  const p = document.getElementById('login-pass').value.trim();
+  if (!u||!p) return toast('Preencha usuario e senha', 'error');
+  const r = await API('/api/login', {method:'POST', body:JSON.stringify({username:u, password:p})});
+  toast(r.msg, r.ok?'success':'error');
+  if (r.ok) { document.getElementById('login-user').value=''; document.getElementById('login-pass').value=''; }
+  refreshAll();
+}
+
+// ─── CONTAS ─────────────────────────────────────────────────
+async function addAccount() {
+  const u = document.getElementById('new-acc-user').value.trim();
+  const p = document.getElementById('new-acc-pass').value.trim();
+  if (!u||!p) return toast('Preencha os campos', 'error');
+  await API('/api/accounts', {method:'POST', body:JSON.stringify({username:u, password:p})});
+  document.getElementById('new-acc-user').value='';
+  document.getElementById('new-acc-pass').value='';
+  refreshAll();
+}
+async function delAccount(i) {
+  await API('/api/accounts', {method:'DELETE', body:JSON.stringify({index:i})});
+  refreshAll();
+}
+async function toggleAccount(i) {
+  await API('/api/toggle-account', {method:'POST', body:JSON.stringify({index:i})});
+  refreshAll();
+}
+
+// ─── TARGETS ────────────────────────────────────────────────
+async function addTarget() {
+  const u = document.getElementById('new-target-user').value.trim();
+  const p = parseInt(document.getElementById('new-target-pri').value)||1;
+  if (!u) return toast('Digite o usuario', 'error');
+  await API('/api/targets', {method:'POST', body:JSON.stringify({username:u, priority:p})});
+  document.getElementById('new-target-user').value='';
+  refreshAll();
+}
+async function delTarget(i) {
+  await API('/api/targets', {method:'DELETE', body:JSON.stringify({index:i})});
+  refreshAll();
+}
+async function toggleTarget(i) {
+  await API('/api/toggle-target', {method:'POST', body:JSON.stringify({index:i})});
+  refreshAll();
+}
+
+// ─── SCRAPING ───────────────────────────────────────────────
+async function startScrape() {
+  const sel = document.getElementById('scrape-account').value;
+  const body = sel ? {account_index: parseInt(sel)} : {};
+  const r = await API('/api/scrape', {method:'POST', body:JSON.stringify(body)});
+  if (r.ok) {
+    scrapeRunning = true;
+    document.getElementById('btn-scrape').style.display='none';
+    document.getElementById('btn-stop').style.display='inline-block';
+    document.getElementById('scrape-progress').style.display='block';
+    document.getElementById('scrape-logs').innerHTML = '';
+    toast(r.msg);
+  } else {
+    toast(r.msg, 'error');
+  }
+}
+function stopScrape() {
+  scrapeRunning = false;
+  document.getElementById('btn-scrape').style.display='inline-block';
+  document.getElementById('btn-stop').style.display='none';
+  document.getElementById('scrape-progress').style.display='none';
+  document.getElementById('header-status').textContent = 'Parado';
+  document.getElementById('status-dot').className = 'dot offline';
+  toast('Scraping parado');
+}
+function pollStatus() {
+  API('/api/status').then(s => {
+    if (s.running) {
+      document.getElementById('btn-scrape').style.display='none';
+      document.getElementById('btn-stop').style.display='inline-block';
+      document.getElementById('scrape-progress').style.display='block';
+      document.getElementById('scrape-msg').textContent = s.message;
+      const pct = s.total>0 ? Math.round(s.progress/s.total*100) : 0;
+      document.getElementById('scrape-pct').textContent = pct+'%';
+      document.getElementById('progress-fill').style.width = pct+'%';
+      document.getElementById('scrape-current').textContent = s.current;
+      document.getElementById('status-dot').className = 'dot busy';
+
+      // Logs
+      const logDiv = document.getElementById('scrape-logs');
+      const count = logDiv.children.length;
+      s.results.slice(count).forEach(r => {
+        const el = document.createElement('div');
+        el.className = `log-line ${r.type}`;
+        el.textContent = r.msg;
+        logDiv.appendChild(el);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      });
+    } else {
+      document.getElementById('btn-scrape').style.display='inline-block';
+      document.getElementById('btn-stop').style.display='none';
+      document.getElementById('status-dot').className = 'dot online';
+    }
+    document.getElementById('header-status').textContent = s.message;
+  });
+}
+
+// ─── REFRESH ────────────────────────────────────────────────
+async function refreshAll() {
+  // STATS
+  const stats = await API('/api/stats');
+  document.getElementById('stat-total').textContent = (stats.total||0).toLocaleString();
+  document.getElementById('stat-profiles').textContent = stats.profiles||0;
+  document.getElementById('stat-disk').textContent = stats.disk_usage||'0 GB';
+
+  // Contas
+  const accs = await API('/api/accounts');
+  let aHtml = '';
+  (accs.accounts||[]).forEach((a, i) => {
+    const active = a.active!==false;
+    aHtml += `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+      <span style="opacity:${active?1:.4}">${active?'🟢':'🔴'} @${a.username}</span>
+      <div style="display:flex;gap:4px;">
+        <button class="btn-card btn-sm" onclick="toggleAccount(${i})">${active?'Desativar':'Ativar'}</button>
+        <button class="btn-red btn-sm" onclick="delAccount(${i})">✕</button>
+      </div>
+    </div>`;
+  });
+  document.getElementById('accounts-list').innerHTML = aHtml || '<span style="color:var(--dim)">Nenhuma conta</span>';
+
+  // Scrape select
+  const sel = document.getElementById('scrape-account');
+  sel.innerHTML = '<option value="">Todas as contas</option>';
+  (accs.accounts||[]).forEach((a, i) => {
+    if (a.active!==false) sel.innerHTML += `<option value="${i}">@${a.username}</option>`;
+  });
+
+  // Targets
+  const tgt = await API('/api/targets');
+  let tHtml = '';
+  (tgt.targets||[]).forEach((t, i) => {
+    const active = t.active!==false;
+    const stars = '⭐'.repeat(t.priority||1);
+    tHtml += `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+      <span style="opacity:${active?1:.4}">${active?'🟢':'🔴'} @${t.username} ${stars}</span>
+      <div style="display:flex;gap:4px;">
+        <button class="btn-card btn-sm" onclick="toggleTarget(${i})">${active?'Desativar':'Ativar'}</button>
+        <button class="btn-red btn-sm" onclick="delTarget(${i})">✕</button>
+      </div>
+    </div>`;
+  });
+  document.getElementById('targets-list').innerHTML = tHtml || '<span style="color:var(--dim)">Nenhum alvo</span>';
+
+  // Chart
+  const daily = stats.daily||{};
+  const days = Object.keys(daily).sort();
+  const values = days.map(d => daily[d]||0);
+  const maxV = Math.max(...values, 1);
+  let cHtml = '';
+  if (days.length === 0) cHtml = '<span style="color:var(--dim)">Sem dados</span>';
+  else {
+    days.forEach((d, i) => {
+      const dayName = new Date(d+'T00:00:00').toLocaleDateString('pt-BR', {weekday:'short'});
+      const v = values[i];
+      const w = Math.max(Math.round(v/maxV*100), 2);
+      const cls = w < 25 ? 'low' : w < 60 ? 'mid' : '';
+      cHtml += `<div class="chart-bar"><span style="width:35px;text-align:right;">${dayName}</span><div class="bar ${cls}" style="width:${w}%"></div><span>${v}</span></div>`;
+    });
+  }
+  document.getElementById('chart-7days').innerHTML = cHtml;
+
+  // Recent
+  let rHtml = '';
+  (stats.recent||[]).slice(0, 15).forEach(r => {
+    const icon = r.type==='photo' ? '🖼' : '🎬';
+    rHtml += `<div class="download-card"><div class="thumb">${icon}</div><div><strong>${r.file}</strong><br><small>@${r.profile} • ${(r.date||'').substring(0,16)}</small></div></div>`;
+  });
+  document.getElementById('recent-list').innerHTML = rHtml || '<span>Nenhum download</span>';
+
+  // Top profiles
+  const tp = stats.top_profiles||[];
+  let tpHtml = '';
+  tp.forEach((p, i) => {
+    tpHtml += `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);">
+      <span style="font-weight:700;min-width:30px;">#${i+1}</span>
+      <span style="flex:1;">@${p.username}</span>
+      <span class="badge badge-green">${p.count} downloads</span>
+    </div>`;
+  });
+  document.getElementById('top-profiles').innerHTML = tpHtml || '<span>Nenhum perfil</span>';
+
+  // All files
+  const files = await API('/api/downloads');
+  let fHtml = '';
+  if (files.length === 0) fHtml = '<span>Nenhum arquivo</span>';
+  files.forEach(f => {
+    const icon = f.type==='photo' ? '🖼' : '🎬';
+    fHtml += `<div class="download-card">
+      <div class="thumb">${icon}</div>
+      <div style="flex:1;"><strong>${f.file}</strong><br><small>@${f.username} • ${(f.date||'').substring(0,16)}</small></div>
+      ${f.exists ? `<a href="${f.url}" target="_blank"><button class="btn-blue btn-sm">Download</button></a>` : '<span class="badge badge-red">Deletado</span>'}
+    </div>`;
+  });
+  document.getElementById('all-files').innerHTML = fHtml;
+}
+
+// ─── RESET ──────────────────────────────────────────────────
+async function resetDB() {
+  if (!confirm('Apagar TODO o banco de dados? Esta acao nao pode ser desfeita.')) return;
+  await API('/api/reset');
+  toast('Banco resetado!');
+  refreshAll();
+}
+
+// ─── INIT ───────────────────────────────────────────────────
+setInterval(pollStatus, 1500);
+setInterval(refreshAll, 5000);
+refreshAll();
+</script>
+</body>
+</html>

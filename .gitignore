@@ -1,0 +1,12 @@
+*.pyc
+__pycache__/
+*.db
+downloads/
+sessions/
+logs/
+backups/
+accounts.json
+targets.json
+config.json
+.env
+*.log
