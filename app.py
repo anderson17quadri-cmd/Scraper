@@ -102,163 +102,201 @@ def get_cfg():
 
 # ─── SCRAPING ENGINE ──────────────────────────────────────────────────────────
 scrape_state = {"running": False, "connected": False, "current_account": "",
-                "message": "Pronto", "progress": 0, "total": 0, "current": "", "logs": []}
+                "message": "Pronto", "progress": 0, "total": 0, "current": "", "logs": [],
+                "stop_requested": False}
 
 def _add_log(msg, typ="info"):
     scrape_state["logs"].append({"time": datetime.now().strftime("%H:%M:%S"), "msg": msg, "type": typ})
     if len(scrape_state["logs"]) > 100:
         scrape_state["logs"] = scrape_state["logs"][-50:]
 
-def _do_scrape(account_index=None):
+def _stopped():
+    if scrape_state.get("stop_requested"):
+        _add_log("Scraping interrompido pelo usuario", "error")
+        scrape_state["message"] = "Interrompido pelo usuario"
+        return True
+    return False
+
+def _do_scrape(account_index=None, target_index=None):
     global scrape_state
     scrape_state.update(running=True, connected=False, current_account="",
-                        message="Ligando motor...", progress=0, total=0, current="", logs=[])
+                        message="Ligando motor...", progress=0, total=0, current="", logs=[],
+                        stop_requested=False)
 
-    cfg = get_cfg()
-    accounts = jload(ACCOUNTS_PATH).get("accounts", [])
-    targets = jload(TARGETS_PATH).get("targets", [])
+    try:
+        cfg = get_cfg()
+        accounts = jload(ACCOUNTS_PATH).get("accounts", [])
+        targets = jload(TARGETS_PATH).get("targets", [])
 
-    if not accounts:
-        scrape_state["message"] = "Erro: Nenhuma conta cadastrada"
-        scrape_state["running"] = False
-        _add_log("Nenhuma conta cadastrada", "error")
-        return
-    if not targets:
-        scrape_state["message"] = "Erro: Nenhum perfil alvo cadastrado"
-        scrape_state["running"] = False
-        _add_log("Nenhum perfil alvo cadastrado", "error")
-        return
+        if not accounts:
+            scrape_state["message"] = "Erro: Nenhuma conta cadastrada"
+            _add_log("Nenhuma conta cadastrada", "error")
+            return
+        if not targets:
+            scrape_state["message"] = "Erro: Nenhum perfil alvo cadastrado"
+            _add_log("Nenhum perfil alvo cadastrado", "error")
+            return
 
-    accs = [accounts[account_index]] if account_index is not None else accounts
-    active_targets = [t for t in targets if t.get("active", True)]
+        if account_index is not None:
+            if not (0 <= account_index < len(accounts)):
+                scrape_state["message"] = "Erro: Conta invalida"
+                _add_log("Indice de conta invalido", "error")
+                return
+            accs = [accounts[account_index]]
+        else:
+            accs = accounts
 
-    if not active_targets:
-        scrape_state["message"] = "Erro: Nenhum alvo ativo"
-        scrape_state["running"] = False
-        _add_log("Nenhum alvo ativo", "error")
-        return
+        if target_index is not None:
+            if not (0 <= target_index < len(targets)):
+                scrape_state["message"] = "Erro: Alvo invalido"
+                _add_log("Indice de alvo invalido", "error")
+                return
+            active_targets = [targets[target_index]]
+        else:
+            active_targets = [t for t in targets if t.get("active", True)]
 
-    for acc in accs:
-        if not acc.get("active", True):
-            continue
+        if not active_targets:
+            scrape_state["message"] = "Erro: Nenhum alvo ativo"
+            _add_log("Nenhum alvo ativo", "error")
+            return
 
-        un = acc['username']
-        pw = acc['password']
-        scrape_state["current_account"] = un
-        scrape_state["message"] = f"Conectando @{un}..."
-        _add_log(f"Tentando login em @{un}...")
+        for acc in accs:
+            if _stopped():
+                break
+            if not acc.get("active", True):
+                continue
 
-        cl_global = None
-        # Tentar importar instagrapi
-        try:
-            from instagrapi import Client as IGClient
-            from instagrapi.exceptions import LoginRequired, PleaseWaitFewMinutes, ClientError
-            cl = IGClient()
-            cl.set_user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            sf = f"{SESSIONS_DIR}/{un}.json"
-            if os.path.exists(sf):
-                try:
-                    cl.load_settings(sf)
-                    cl.login(un, pw)
-                except:
+            un = acc.get('username')
+            pw = acc.get('password')
+            if not un or not pw:
+                _add_log("Conta invalida (sem usuario/senha)", "error")
+                continue
+            scrape_state["current_account"] = un
+            scrape_state["message"] = f"Conectando @{un}..."
+            _add_log(f"Tentando login em @{un}...")
+
+            # Tentar importar instagrapi
+            try:
+                from instagrapi import Client as IGClient
+                from instagrapi.exceptions import LoginRequired, PleaseWaitFewMinutes, ClientError
+                cl = IGClient()
+                cl.set_user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                sf = f"{SESSIONS_DIR}/{un}.json"
+                if os.path.exists(sf):
+                    try:
+                        cl.load_settings(sf)
+                        cl.login(un, pw)
+                    except:
+                        cl.login(un, pw)
+                        cl.dump_settings(sf)
+                else:
                     cl.login(un, pw)
                     cl.dump_settings(sf)
-            else:
-                cl.login(un, pw)
-                cl.dump_settings(sf)
 
-            scrape_state["connected"] = True
-            _add_log(f"Login OK @{un}")
-        except Exception as e:
-            _add_log(f"Falha login @{un}: {e}", "error")
-            scrape_state["message"] = f"Falha login @{un}"
-            continue
-
-        for tgt in active_targets:
-            tu = tgt['username']
-            scrape_state["message"] = f"Buscando @{tu}..."
-            scrape_state["current"] = f"@{tu}"
-            _add_log(f"Iniciando @{tu}...")
-
-            try:
-                uid = cl.user_id_from_username(tu)
-            except:
-                _add_log(f"@{tu} nao encontrado", "error")
-                continue
-
-            try:
-                medias = cl.user_medias(uid, amount=cfg.get("posts_per_profile", 15))
+                scrape_state["connected"] = True
+                _add_log(f"Login OK @{un}")
             except Exception as e:
-                _add_log(f"Erro buscar @{tu}: {e}", "error")
+                _add_log(f"Falha login @{un}: {e}", "error")
+                scrape_state["message"] = f"Falha login @{un}"
                 continue
 
-            scrape_state["total"] = len(medias)
-            _add_log(f"@{tu}: {len(medias)} midias encontradas")
-
-            folder = f"{DOWNLOADS_DIR}/{tu}"
-            os.makedirs(folder, exist_ok=True)
-            downloaded_count = 0
-
-            for i, m in enumerate(medias):
-                scrape_state["progress"] = i + 1
-
-                if is_downloaded(m.id):
-                    continue
-
-                date_str = m.taken_at.strftime("%Y%m%d_%H%M%S")
-                path = None
+            for tgt in active_targets:
+                if _stopped():
+                    break
+                tu = tgt['username']
+                scrape_state["message"] = f"Buscando @{tu}..."
+                scrape_state["current"] = f"@{tu}"
+                _add_log(f"Iniciando @{tu}...")
 
                 try:
-                    if m.media_type == 1:
-                        path = cl.photo_download(m.id, folder=folder, filename=f"{tu}_{date_str}")
-                        mtype = 'photo'
-                    elif m.media_type == 2:
-                        path = cl.video_download(m.id, folder=folder, filename=f"{tu}_{date_str}")
-                        mtype = 'video'
-                    elif m.media_type == 8:  # carousel
-                        resources = cl.media_resources(m.id)
-                        for j, res in enumerate(resources):
-                            try:
-                                if res.media_type == 1:
-                                    path = cl.photo_download(res.id, folder=folder, filename=f"{tu}_{date_str}_c{j}")
-                                    mtype = 'photo'
-                                else:
-                                    path = cl.video_download(res.id, folder=folder, filename=f"{tu}_{date_str}_c{j}")
-                                    mtype = 'video'
-                                add_download({'media_id': res.id, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': m.taken_at.isoformat()})
-                                downloaded_count += 1
-                                _add_log(f"Download: {os.path.basename(path)}", "success")
-                            except:
-                                pass
-                        continue
-
-                    add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': m.taken_at.isoformat()})
-                    downloaded_count += 1
-                    _add_log(f"Download: {os.path.basename(path)}", "success")
-
-                    if m.media_type == 2 and hasattr(m, 'video_duration'):
-                        time.sleep(min(m.video_duration + 3, 60))
-                    else:
-                        time.sleep(3 + random.random() * 7)
-
-                except Exception as e:
-                    es = str(e)
-                    _add_log(f"Erro: {es[:80]}", "error")
-                    if "429" in es:
-                        time.sleep(120)
-                    elif "PleaseWaitFewMinutes" in es:
-                        time.sleep(300)
+                    uid = cl.user_id_from_username(tu)
+                except:
+                    _add_log(f"@{tu} nao encontrado", "error")
                     continue
 
-            _add_log(f"@{tu}: {downloaded_count} baixados", "success")
-            time.sleep(10 + random.random() * 10)
+                try:
+                    medias = cl.user_medias(uid, amount=cfg.get("posts_per_profile", 15))
+                except Exception as e:
+                    _add_log(f"Erro buscar @{tu}: {e}", "error")
+                    continue
 
-    total_logs = sum(1 for l in scrape_state["logs"] if l["type"] == "success")
-    scrape_state["running"] = False
-    scrape_state["connected"] = False
-    scrape_state["current"] = ""
-    scrape_state["message"] = f"Finalizado: {total_logs} downloads"
-    _add_log("Scraping concluido", "success")
+                scrape_state["total"] = len(medias)
+                _add_log(f"@{tu}: {len(medias)} midias encontradas")
+
+                folder = f"{DOWNLOADS_DIR}/{tu}"
+                os.makedirs(folder, exist_ok=True)
+                downloaded_count = 0
+
+                for i, m in enumerate(medias):
+                    if _stopped():
+                        break
+                    scrape_state["progress"] = i + 1
+
+                    if is_downloaded(m.id):
+                        continue
+
+                    date_str = m.taken_at.strftime("%Y%m%d_%H%M%S")
+                    path = None
+
+                    try:
+                        if m.media_type == 1:
+                            path = cl.photo_download(m.id, folder=folder, filename=f"{tu}_{date_str}")
+                            mtype = 'photo'
+                        elif m.media_type == 2:
+                            path = cl.video_download(m.id, folder=folder, filename=f"{tu}_{date_str}")
+                            mtype = 'video'
+                        elif m.media_type == 8:  # carousel
+                            resources = cl.media_resources(m.id)
+                            for j, res in enumerate(resources):
+                                try:
+                                    if res.media_type == 1:
+                                        path = cl.photo_download(res.id, folder=folder, filename=f"{tu}_{date_str}_c{j}")
+                                        mtype = 'photo'
+                                    else:
+                                        path = cl.video_download(res.id, folder=folder, filename=f"{tu}_{date_str}_c{j}")
+                                        mtype = 'video'
+                                    add_download({'media_id': res.id, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': m.taken_at.isoformat()})
+                                    downloaded_count += 1
+                                    _add_log(f"Download: {os.path.basename(path)}", "success")
+                                except:
+                                    pass
+                            continue
+
+                        add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': m.taken_at.isoformat()})
+                        downloaded_count += 1
+                        _add_log(f"Download: {os.path.basename(path)}", "success")
+
+                        if m.media_type == 2 and hasattr(m, 'video_duration'):
+                            time.sleep(min(m.video_duration + 3, 60))
+                        else:
+                            time.sleep(3 + random.random() * 7)
+
+                    except Exception as e:
+                        es = str(e)
+                        _add_log(f"Erro: {es[:80]}", "error")
+                        if "429" in es:
+                            time.sleep(120)
+                        elif "PleaseWaitFewMinutes" in es:
+                            time.sleep(300)
+                        continue
+
+                _add_log(f"@{tu}: {downloaded_count} baixados", "success")
+                if _stopped():
+                    break
+                time.sleep(10 + random.random() * 10)
+
+        if not scrape_state.get("stop_requested"):
+            total_logs = sum(1 for l in scrape_state["logs"] if l["type"] == "success")
+            scrape_state["message"] = f"Finalizado: {total_logs} downloads"
+            _add_log("Scraping concluido", "success")
+    except Exception as e:
+        _add_log(f"Erro fatal no scraping: {e}", "error")
+        scrape_state["message"] = f"Erro fatal: {e}"
+    finally:
+        scrape_state["running"] = False
+        scrape_state["connected"] = False
+        scrape_state["current"] = ""
+        scrape_state["stop_requested"] = False
 
 # ─── API ROUTES ───────────────────────────────────────────────────────────────
 @app.route("/api/login", methods=["POST"])
@@ -386,9 +424,21 @@ def api_scrape():
     if scrape_state["running"]:
         return jsonify({"ok": False, "msg": "Scraping ja esta rodando"})
     data = request.get_json() or {}
-    idx = data.get("account_index")
-    threading.Thread(target=_do_scrape, args=(idx,), daemon=True).start()
+    acc_idx = data.get("account_index")
+    tgt_idx = data.get("target_index")
+    acc_idx = int(acc_idx) if acc_idx not in (None, "") else None
+    tgt_idx = int(tgt_idx) if tgt_idx not in (None, "") else None
+    threading.Thread(target=_do_scrape, args=(acc_idx, tgt_idx), daemon=True).start()
     return jsonify({"ok": True, "msg": "Scraping iniciado!"})
+
+@app.route("/api/stop", methods=["POST"])
+def api_stop():
+    global scrape_state
+    if not scrape_state["running"]:
+        return jsonify({"ok": False, "msg": "Nenhum scraping em andamento"})
+    scrape_state["stop_requested"] = True
+    scrape_state["message"] = "Parando..."
+    return jsonify({"ok": True, "msg": "Interrompendo scraping..."})
 
 @app.route("/api/status")
 def api_status():

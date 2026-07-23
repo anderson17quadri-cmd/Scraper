@@ -492,10 +492,16 @@ async function toggleTarget(i) {
 
 // ─── SCRAPING ────────────────────────────────────────────────────────────────
 async function startScrape() {
-  const r = await api('/api/scrape', {method:'POST', body:JSON.stringify({})});
+  const accVal = $('scrape-account').value;
+  const tgtVal = $('scrape-target').value;
+  const body = {};
+  if (accVal !== '') body.account_index = parseInt(accVal);
+  if (tgtVal !== '') body.target_index = parseInt(tgtVal);
+  const r = await api('/api/scrape', {method:'POST', body:JSON.stringify(body)});
   if (r.ok) {
     $('btn-start').style.display = 'none';
     $('btn-stop').style.display = '';
+    $('btn-stop').disabled = false;
     $('progress-wrap').style.display = '';
     $('log-card').hidden = false;
     $('prog-fill').style.width = '0%';
@@ -506,11 +512,10 @@ async function startScrape() {
     toast(r.msg, 'err');
   }
 }
-function stopScrape() {
-  $('btn-start').style.display = '';
-  $('btn-stop').style.display = 'none';
-  $('progress-wrap').style.display = 'none';
-  toast('Parado manualmente');
+async function stopScrape() {
+  $('btn-stop').disabled = true;
+  const r = await api('/api/stop', {method:'POST'});
+  toast(r.msg, r.ok ? 'ok' : 'err');
 }
 
 // ─── POLL STATUS ─────────────────────────────────────────────────────────────
@@ -541,6 +546,7 @@ function pollStatus() {
     } else {
       $('btn-start').style.display = '';
       $('btn-stop').style.display = 'none';
+      $('btn-stop').disabled = false;
       $('progress-wrap').style.display = 'none';
       $('header-status').textContent = s.message;
 

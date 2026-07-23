@@ -176,7 +176,8 @@ class InstagramScraper:
     def _scrape_all_targets(self, progress=None, task=None):
         with open('targets.json', 'r') as f:
             data = json.load(f)
-        total, errors = 0, 0
+        total = 0
+        errors_before = self.total_errors
         targets = sorted(data['targets'], key=lambda x: x.get('priority', 1))
         for target in targets:
             if not target.get('active', True): continue
@@ -189,5 +190,5 @@ class InstagramScraper:
                 task=task
             )
             total += len(medias)
-            errors += self.total_errors - errors
+        errors = self.total_errors - errors_before
         return {'total': total, 'time': 0, 'errors': errors}
