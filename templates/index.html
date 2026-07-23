@@ -497,9 +497,7 @@ header {
       </div>
       <div id="preview-zip" hidden style="margin-bottom:10px;"></div>
       <div id="preview-grid" class="preview-grid"></div>
-      <button class="btn btn-ghost btn-full" id="btn-preview-more" onclick="loadMorePreview()" hidden style="margin-top:10px;">
-        Carregar mais
-      </button>
+      <div id="preview-load-status" class="card-sub" style="text-align:center;margin-top:10px;" hidden></div>
     </div>
   </section>
 
@@ -774,7 +772,7 @@ function resetPreviewGrid() {
   $('preview-grid').innerHTML = '';
   $('preview-actions').hidden = true;
   $('preview-type-filter').hidden = true;
-  $('btn-preview-more').hidden = true;
+  $('preview-load-status').hidden = true;
   $('preview-zip').hidden = true;
 }
 
@@ -809,39 +807,37 @@ async function loadPostsPreview() {
   $('preview-grid').innerHTML = '<div class="empty"><p>Buscando posts...</p></div>';
 
   const r = await api('/api/preview', {method:'POST', body:JSON.stringify(previewAccountBody())});
-  $('btn-preview-load').disabled = false;
-
   if (!r.ok) {
+    $('btn-preview-load').disabled = false;
     $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
     return toast(r.msg, 'err');
   }
+
   previewCacheKey = r.cache_key;
   previewItems = r.items;
   previewSelected = new Set(previewItems.filter(i => !i.already).map(i => i.id));
   renderPreview();
   $('preview-actions').hidden = false;
   $('preview-type-filter').hidden = false;
-  $('btn-preview-more').hidden = !r.has_more;
-  toast(`${previewItems.length} posts encontrados${r.has_more ? ' (tem mais, use "Carregar mais")' : ''}`);
-}
 
-async function loadMorePreview() {
-  $('btn-preview-more').disabled = true;
-  $('btn-preview-more').textContent = 'Carregando...';
-
-  const r = await api('/api/preview-more', {method:'POST', body:JSON.stringify({cache_key: previewCacheKey})});
-
-  $('btn-preview-more').disabled = false;
-  $('btn-preview-more').textContent = 'Carregar mais';
-
-  if (!r.ok) return toast(r.msg, 'err');
-
-  const novos = r.items.filter(it => !it.already);
-  novos.forEach(it => previewSelected.add(it.id));
-  previewItems = previewItems.concat(r.items);
-  renderPreview();
-  $('btn-preview-more').hidden = !r.has_more;
-  toast(`+${r.items.length} midias carregadas`);
+  // busca as paginas seguintes sozinho, sem precisar de "Carregar mais"
+  let hasMore = r.has_more;
+  const status = $('preview-load-status');
+  while (hasMore) {
+    status.hidden = false;
+    status.textContent = `Carregando mais posts... (${previewItems.length} ate agora)`;
+    await new Promise(res => setTimeout(res, 400));
+    const more = await api('/api/preview-more', {method:'POST', body:JSON.stringify({cache_key: previewCacheKey})});
+    if (!more.ok) { toast(more.msg, 'err'); break; }
+    const novos = more.items.filter(it => !it.already);
+    novos.forEach(it => previewSelected.add(it.id));
+    previewItems = previewItems.concat(more.items);
+    hasMore = more.has_more;
+    renderPreview();
+  }
+  status.hidden = true;
+  $('btn-preview-load').disabled = false;
+  toast(`${previewItems.length} posts encontrados`);
 }
 
 async function loadStoriesPreview() {
