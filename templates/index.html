@@ -183,6 +183,30 @@ header {
   border-radius:4px; transition:width 0.4s ease; width:0%;
 }
 
+/* ─── PREVIEW GRID ──────────────────────────────────────── */
+.preview-actions { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+.preview-grid {
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(84px, 1fr)); gap:8px;
+  max-height:440px; overflow-y:auto;
+}
+.preview-item {
+  position:relative; aspect-ratio:1; border-radius:8px; overflow:hidden;
+  border:2px solid transparent; cursor:pointer; background:var(--bg2);
+}
+.preview-item.selected { border-color:var(--cyan); }
+.preview-item.already { opacity:0.35; }
+.preview-item img { width:100%; height:100%; object-fit:cover; display:block; }
+.preview-item .badge-type {
+  position:absolute; top:4px; left:4px; font-size:0.85rem; text-shadow:0 1px 3px rgba(0,0,0,0.8);
+}
+.preview-item .check {
+  position:absolute; top:4px; right:4px; width:20px; height:20px; border-radius:50%;
+  background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center;
+  font-size:0.72rem; color:#fff; font-weight:700;
+}
+.preview-item.selected .check { background:var(--cyan); color:#000; }
+.preview-item.already .check { background:rgba(34,197,94,0.85); color:#000; }
+
 /* ─── LOG CONSOLE ───────────────────────────────────────── */
 .log-console {
   background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm);
@@ -374,6 +398,22 @@ header {
         <div class="progress-fill" id="prog-fill"></div>
       </div>
     </div>
+  </div>
+
+  <!-- PREVIEW / SELECAO -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="card-header"><span class="card-title">Pre-visualizar e selecionar</span></div>
+    <div class="input-row" style="margin-bottom:10px;">
+      <input class="input" id="preview-target" placeholder="Perfil (sem @)...">
+      <button class="btn btn-primary" onclick="loadPreview()" id="btn-preview-load">Buscar</button>
+    </div>
+    <div id="preview-actions" class="preview-actions" hidden>
+      <button class="btn btn-ghost btn-xs" onclick="selectAllPreview(true)">Selecionar tudo</button>
+      <button class="btn btn-ghost btn-xs" onclick="selectAllPreview(false)">Limpar selecao</button>
+      <button class="btn btn-success btn-xs" onclick="downloadSelected()" id="btn-download-selected" style="margin-left:auto;">Baixar selecionados (0)</button>
+    </div>
+    <div id="preview-zip" hidden style="margin-bottom:10px;"></div>
+    <div id="preview-grid" class="preview-grid"></div>
   </div>
 
   <!-- LOG CONSOLE -->
@@ -607,6 +647,89 @@ async function stopScrape() {
   toast(r.msg, r.ok ? 'ok' : 'err');
 }
 
+// ─── PREVIEW / SELECAO ───────────────────────────────────────────────────────
+let previewItems = [];
+let previewSelected = new Set();
+let previewTarget = '';
+let lastZipUrl = null;
+
+async function loadPreview() {
+  const t = $('preview-target').value.trim().replace(/^@/, '');
+  if (!t) return toast('Digite o perfil alvo', 'err');
+  previewTarget = t;
+
+  $('btn-preview-load').disabled = true;
+  $('btn-preview-load').textContent = 'Buscando...';
+  $('preview-grid').innerHTML = '<div class="empty"><p>Buscando midias...</p></div>';
+  $('preview-actions').hidden = true;
+
+  const accVal = $('scrape-account').value;
+  const body = {target_username: t};
+  if (accVal !== '') body.account_index = parseInt(accVal);
+
+  const r = await api('/api/preview', {method:'POST', body:JSON.stringify(body)});
+  $('btn-preview-load').disabled = false;
+  $('btn-preview-load').textContent = 'Buscar';
+
+  if (!r.ok) {
+    $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    return toast(r.msg, 'err');
+  }
+  previewItems = r.items;
+  previewSelected = new Set(previewItems.filter(i => !i.already).map(i => i.id));
+  renderPreview();
+  $('preview-actions').hidden = false;
+  toast(`${previewItems.length} midias encontradas`);
+}
+
+function renderPreview() {
+  let html = '';
+  previewItems.forEach(it => {
+    const sel = previewSelected.has(it.id);
+    const badge = it.type === 'video' ? '🎬' : it.type === 'carousel' ? '🖼️+' : '';
+    const img = it.thumbnail
+      ? `<img src="${it.thumbnail}" loading="lazy">`
+      : '<div class="empty" style="padding:26px 0;font-size:1.4rem;">?</div>';
+    html += `<div class="preview-item ${sel?'selected':''} ${it.already?'already':''}" onclick="togglePreview('${it.id}')" title="${it.already?'Ja baixado':''}">
+      ${img}
+      ${badge?`<span class="badge-type">${badge}</span>`:''}
+      <span class="check">${it.already?'✓':(sel?'✓':'')}</span>
+    </div>`;
+  });
+  $('preview-grid').innerHTML = html || '<div class="empty"><p>Nenhuma midia encontrada</p></div>';
+  $('btn-download-selected').textContent = `Baixar selecionados (${previewSelected.size})`;
+}
+
+function togglePreview(id) {
+  const it = previewItems.find(i => i.id === id);
+  if (!it || it.already) return;
+  if (previewSelected.has(id)) previewSelected.delete(id); else previewSelected.add(id);
+  renderPreview();
+}
+
+function selectAllPreview(all) {
+  previewSelected = all
+    ? new Set(previewItems.filter(i => !i.already).map(i => i.id))
+    : new Set();
+  renderPreview();
+}
+
+async function downloadSelected() {
+  if (previewSelected.size === 0) return toast('Nada selecionado', 'err');
+  $('preview-zip').hidden = true;
+  const r = await api('/api/download-selected', {
+    method: 'POST',
+    body: JSON.stringify({target_username: previewTarget, media_ids: [...previewSelected]})
+  });
+  if (r.ok) {
+    $('log-card').hidden = false;
+    $('progress-wrap').style.display = '';
+    toast(r.msg);
+  } else {
+    toast(r.msg, 'err');
+  }
+}
+
 // ─── POLL STATUS ─────────────────────────────────────────────────────────────
 function pollStatus() {
   api('/api/status').then(s => {
@@ -638,6 +761,12 @@ function pollStatus() {
       $('btn-stop').disabled = false;
       $('progress-wrap').style.display = 'none';
       $('header-status').textContent = s.message;
+
+      if (s.zip_url && s.zip_url !== lastZipUrl) {
+        lastZipUrl = s.zip_url;
+        $('preview-zip').hidden = false;
+        $('preview-zip').innerHTML = `<a href="${s.zip_url}" target="_blank"><button class="btn btn-success btn-full">📦 Baixar ZIP dos selecionados</button></a>`;
+      }
 
       if (loggedIn) {
         $('header-badge').className = 'status-badge online';

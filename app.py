@@ -4,7 +4,7 @@ IG-SCRAPER-PRO v4.0 - Web Dashboard
 python app.py  ->  http://localhost:5000
 """
 
-import os, json, time, threading, sqlite3, random
+import os, json, time, threading, sqlite3, random, zipfile
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from ig_auth import login_account, login_by_sessionid, translate_ig_error
@@ -12,6 +12,7 @@ from ig_auth import login_account, login_by_sessionid, translate_ig_error
 app = Flask(__name__)
 
 DOWNLOADS_DIR = "downloads"
+ZIPS_DIR = f"{DOWNLOADS_DIR}/_zips"
 SESSIONS_DIR = "sessions"
 DB_PATH = "scraper.db"
 ACCOUNTS_PATH = "accounts.json"
@@ -121,7 +122,23 @@ def upsert_account(username, password=None, sessionid=None):
 # ─── SCRAPING ENGINE ──────────────────────────────────────────────────────────
 scrape_state = {"running": False, "connected": False, "current_account": "",
                 "message": "Pronto", "progress": 0, "total": 0, "current": "", "logs": [],
-                "stop_requested": False}
+                "stop_requested": False, "zip_url": None}
+
+# cache em memoria: username-alvo -> {"cl": Client autenticado, "medias": [Media,...]}
+# preenchido por /api/preview e consumido por /api/download-selected
+preview_cache = {}
+
+def _make_zip(target, paths):
+    paths = [p for p in paths if p and os.path.exists(p)]
+    if not paths:
+        return None
+    os.makedirs(ZIPS_DIR, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    zip_path = f"{ZIPS_DIR}/{target}_{ts}.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in paths:
+            zf.write(p, arcname=os.path.basename(p))
+    return f"/downloads/_zips/{os.path.basename(zip_path)}"
 
 def _add_log(msg, typ="info"):
     scrape_state["logs"].append({"time": datetime.now().strftime("%H:%M:%S"), "msg": msg, "type": typ})
@@ -135,11 +152,56 @@ def _stopped():
         return True
     return False
 
+def _download_one(cl, tu, m, folder):
+    """Baixa uma midia (foto/video/carrossel) na maior resolucao que o
+    instagrapi tiver disponivel. Retorna a lista de caminhos salvos."""
+    date_str = m.taken_at.strftime("%Y%m%d_%H%M%S")
+    saved_paths = []
+    try:
+        if m.media_type == 1:
+            path = cl.photo_download_by_url(m.thumbnail_url, filename=f"{tu}_{date_str}", folder=folder)
+            add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': 'photo', 'date': m.taken_at.isoformat()})
+            _add_log(f"Download: {os.path.basename(path)}", "success")
+            saved_paths.append(str(path))
+        elif m.media_type == 2:
+            path = cl.video_download_by_url(m.video_url, filename=f"{tu}_{date_str}", folder=folder)
+            add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': 'video', 'date': m.taken_at.isoformat()})
+            _add_log(f"Download: {os.path.basename(path)}", "success")
+            saved_paths.append(str(path))
+        elif m.media_type == 8:  # carousel
+            for j, res in enumerate(m.resources):
+                try:
+                    if res.media_type == 1:
+                        path = cl.photo_download_by_url(res.thumbnail_url, filename=f"{tu}_{date_str}_c{j}", folder=folder)
+                        rtype = 'photo'
+                    else:
+                        path = cl.video_download_by_url(res.video_url, filename=f"{tu}_{date_str}_c{j}", folder=folder)
+                        rtype = 'video'
+                    add_download({'media_id': res.pk, 'username': tu, 'file': os.path.basename(path), 'type': rtype, 'date': m.taken_at.isoformat()})
+                    _add_log(f"Download: {os.path.basename(path)}", "success")
+                    saved_paths.append(str(path))
+                except Exception:
+                    pass
+    except Exception as e:
+        es = str(e)
+        _add_log(f"Erro: {es[:80]}", "error")
+        if "429" in es:
+            time.sleep(120)
+        elif "PleaseWaitFewMinutes" in es:
+            time.sleep(300)
+    return saved_paths
+
+def _human_delay_after(m):
+    if m.media_type == 2 and hasattr(m, 'video_duration') and m.video_duration:
+        time.sleep(min(m.video_duration + 3, 60))
+    else:
+        time.sleep(3 + random.random() * 7)
+
 def _do_scrape(account_index=None, target_index=None):
     global scrape_state
     scrape_state.update(running=True, connected=False, current_account="",
                         message="Ligando motor...", progress=0, total=0, current="", logs=[],
-                        stop_requested=False)
+                        stop_requested=False, zip_url=None)
 
     try:
         cfg = get_cfg()
@@ -238,49 +300,10 @@ def _do_scrape(account_index=None, target_index=None):
                     if is_downloaded(m.id):
                         continue
 
-                    date_str = m.taken_at.strftime("%Y%m%d_%H%M%S")
-                    path = None
-
-                    try:
-                        if m.media_type == 1:
-                            path = cl.photo_download_by_url(m.thumbnail_url, filename=f"{tu}_{date_str}", folder=folder)
-                            mtype = 'photo'
-                        elif m.media_type == 2:
-                            path = cl.video_download_by_url(m.video_url, filename=f"{tu}_{date_str}", folder=folder)
-                            mtype = 'video'
-                        elif m.media_type == 8:  # carousel
-                            for j, res in enumerate(m.resources):
-                                try:
-                                    if res.media_type == 1:
-                                        path = cl.photo_download_by_url(res.thumbnail_url, filename=f"{tu}_{date_str}_c{j}", folder=folder)
-                                        mtype = 'photo'
-                                    else:
-                                        path = cl.video_download_by_url(res.video_url, filename=f"{tu}_{date_str}_c{j}", folder=folder)
-                                        mtype = 'video'
-                                    add_download({'media_id': res.pk, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': m.taken_at.isoformat()})
-                                    downloaded_count += 1
-                                    _add_log(f"Download: {os.path.basename(path)}", "success")
-                                except:
-                                    pass
-                            continue
-
-                        add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': m.taken_at.isoformat()})
-                        downloaded_count += 1
-                        _add_log(f"Download: {os.path.basename(path)}", "success")
-
-                        if m.media_type == 2 and hasattr(m, 'video_duration'):
-                            time.sleep(min(m.video_duration + 3, 60))
-                        else:
-                            time.sleep(3 + random.random() * 7)
-
-                    except Exception as e:
-                        es = str(e)
-                        _add_log(f"Erro: {es[:80]}", "error")
-                        if "429" in es:
-                            time.sleep(120)
-                        elif "PleaseWaitFewMinutes" in es:
-                            time.sleep(300)
-                        continue
+                    saved = _download_one(cl, tu, m, folder)
+                    downloaded_count += len(saved)
+                    if saved:
+                        _human_delay_after(m)
 
                 _add_log(f"@{tu}: {downloaded_count} baixados", "success")
                 if _stopped():
@@ -428,6 +451,106 @@ def api_scrape():
     tgt_idx = int(tgt_idx) if tgt_idx not in (None, "") else None
     threading.Thread(target=_do_scrape, args=(acc_idx, tgt_idx), daemon=True).start()
     return jsonify({"ok": True, "msg": "Scraping iniciado!"})
+
+@app.route("/api/preview", methods=["POST"])
+def api_preview():
+    data = request.get_json() or {}
+    target_username = (data.get("target_username") or "").strip().lstrip("@")
+    if not target_username:
+        return jsonify({"ok": False, "msg": "Informe o perfil alvo"})
+
+    accounts = jload(ACCOUNTS_PATH).get("accounts", [])
+    if not accounts:
+        return jsonify({"ok": False, "msg": "Nenhuma conta cadastrada"})
+
+    acc_idx = data.get("account_index")
+    if acc_idx in (None, ""):
+        acc_idx = next((i for i, a in enumerate(accounts) if a.get("active", True)), None)
+    else:
+        acc_idx = int(acc_idx)
+    if acc_idx is None or not (0 <= acc_idx < len(accounts)):
+        return jsonify({"ok": False, "msg": "Nenhuma conta valida"})
+    acc = accounts[acc_idx]
+
+    try:
+        cl = login_account(acc, f"{SESSIONS_DIR}/{acc['username']}.json")
+    except Exception as e:
+        return jsonify({"ok": False, "msg": translate_ig_error(e)})
+
+    try:
+        uid = cl.user_id_from_username(target_username)
+        medias = cl.user_medias(uid, amount=int(data.get("amount") or 30))
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Erro ao buscar @{target_username}: {e}"})
+
+    preview_cache[target_username] = {"cl": cl, "medias": medias}
+
+    items = []
+    for m in medias:
+        thumb = m.thumbnail_url or (m.resources[0].thumbnail_url if m.media_type == 8 and m.resources else None)
+        items.append({
+            "id": str(m.id),
+            "type": "carousel" if m.media_type == 8 else ("video" if m.media_type == 2 else "photo"),
+            "thumbnail": str(thumb) if thumb else None,
+            "date": m.taken_at.isoformat(),
+            "already": is_downloaded(m.id),
+        })
+    return jsonify({"ok": True, "items": items, "target": target_username})
+
+@app.route("/api/download-selected", methods=["POST"])
+def api_download_selected():
+    global scrape_state
+    if scrape_state["running"]:
+        return jsonify({"ok": False, "msg": "Scraping ja esta rodando"})
+    data = request.get_json() or {}
+    target_username = (data.get("target_username") or "").strip()
+    ids = set(str(i) for i in data.get("media_ids", []))
+    cache = preview_cache.get(target_username)
+    if not cache or not ids:
+        return jsonify({"ok": False, "msg": "Nada selecionado ou preview expirado. Busque de novo."})
+
+    selected = [m for m in cache["medias"] if str(m.id) in ids]
+    if not selected:
+        return jsonify({"ok": False, "msg": "Selecao invalida, busque de novo."})
+
+    threading.Thread(target=_do_selected_download, args=(cache["cl"], target_username, selected), daemon=True).start()
+    return jsonify({"ok": True, "msg": f"Baixando {len(selected)} selecionados..."})
+
+def _do_selected_download(cl, tu, medias):
+    global scrape_state
+    scrape_state.update(running=True, connected=True, current_account=getattr(cl, "username", "") or "",
+                        message=f"Baixando selecionados de @{tu}...", progress=0,
+                        total=len(medias), current=f"@{tu}", logs=[], stop_requested=False,
+                        zip_url=None)
+    folder = f"{DOWNLOADS_DIR}/{tu}"
+    os.makedirs(folder, exist_ok=True)
+    all_saved = []
+    try:
+        for i, m in enumerate(medias):
+            if _stopped():
+                break
+            scrape_state["progress"] = i + 1
+            if is_downloaded(m.id):
+                continue
+            saved = _download_one(cl, tu, m, folder)
+            all_saved.extend(saved)
+            if saved:
+                _human_delay_after(m)
+
+        if not scrape_state.get("stop_requested"):
+            zip_url = _make_zip(tu, all_saved)
+            scrape_state["zip_url"] = zip_url
+            done_msg = f"Finalizado: {len(all_saved)} arquivos baixados"
+            scrape_state["message"] = done_msg + (" (zip pronto)" if zip_url else "")
+            _add_log("Download dos selecionados concluido", "success")
+    except Exception as e:
+        _add_log(f"Erro fatal: {e}", "error")
+        scrape_state["message"] = f"Erro fatal: {e}"
+    finally:
+        scrape_state["running"] = False
+        scrape_state["connected"] = False
+        scrape_state["current"] = ""
+        scrape_state["stop_requested"] = False
 
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
