@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IG-SCRAPER-PRO v4.0 - Web Dashboard
+IG-SCRAPER-PRO v5.0 - Web Dashboard
 python app.py  ->  http://localhost:5000
 """
 
@@ -38,11 +38,8 @@ def db_query(sql, params=(), fetch=True):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(sql, params)
-    if fetch:
-        rows = c.fetchall()
-    else:
-        conn.commit()
-        rows = None
+    rows = c.fetchall() if fetch else None
+    if not fetch: conn.commit()
     conn.close()
     return rows
 
@@ -81,13 +78,11 @@ def get_stats():
 # ─── JSON HELPERS ─────────────────────────────────────────────────────────────
 def jload(path, default=None):
     if os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
+        with open(path) as f: return json.load(f)
     return default if default is not None else {}
 
 def jsave(path, data):
-    with open(path, 'w') as f:
-        json.dump(data, f, indent=2)
+    with open(path, 'w') as f: json.dump(data, f, indent=2)
 
 def init_files():
     if not os.path.exists(ACCOUNTS_PATH): jsave(ACCOUNTS_PATH, {"accounts": []})
@@ -100,100 +95,145 @@ def get_cfg():
     return jload(CONFIG_PATH, {"delay_min": 3, "delay_max": 10, "posts_per_profile": 15,
                                 "auto_interval": 3600, "max_downloads_per_day": 500})
 
+# ─── INSTAGRAM LOGIN HELPER ───────────────────────────────────────────────────
+def ig_login(username, password, session_file=None):
+    """Tenta fazer login no Instagram. Retorna (Client, error_msg)."""
+    from instagrapi import Client as IGClient
+    cl = IGClient()
+
+    # User agent mobile para evitar deteccao
+    cl.set_user_agent("Mozilla/5.0 (Linux; Android 13; SM-S9080) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36")
+
+    sf = session_file or f"{SESSIONS_DIR}/{username}.json"
+
+    # Tenta carregar sessao salva
+    session_loaded = False
+    if os.path.exists(sf):
+        try:
+            cl.load_settings(sf)
+            session_loaded = True
+        except:
+            pass
+
+    try:
+        cl.login(username, password)
+
+        # Salva sessao
+        os.makedirs(SESSIONS_DIR, exist_ok=True)
+        cl.dump_settings(sf)
+
+        return cl, None
+    except Exception as e:
+        error_msg = str(e)
+
+        # Trata erros comuns
+        if "challenge" in error_msg.lower():
+            return None, "Instagram pede verificacao. Tente fazer login manual uma vez no app/navegador para liberar."
+        elif "checkpoint" in error_msg.lower():
+            return None, "Conta bloqueada temporariamente. Acesse o Instagram pelo app para desbloquear."
+        elif "password" in error_msg.lower():
+            return None, "Senha incorreta."
+        elif "username" in error_msg.lower():
+            return None, "Usuario nao encontrado."
+        elif "rate limit" in error_msg.lower() or "429" in error_msg:
+            return None, "Muitas tentativas. Aguarde alguns minutos."
+        elif "CSRF" in error_msg:
+            return None, "Erro de sessao. Tente novamente."
+        else:
+            return None, f"Falha: {error_msg[:100]}"
+
 # ─── SCRAPING ENGINE ──────────────────────────────────────────────────────────
-scrape_state = {"running": False, "connected": False, "current_account": "",
-                "message": "Pronto", "progress": 0, "total": 0, "current": "", "logs": []}
+scrape_state = {
+    "running": False, "connected": False, "current_account": "",
+    "message": "Pronto", "progress": 0, "total": 0, "current": "", "logs": []
+}
 
 def _add_log(msg, typ="info"):
-    scrape_state["logs"].append({"time": datetime.now().strftime("%H:%M:%S"), "msg": msg, "type": typ})
+    scrape_state["logs"].append({
+        "time": datetime.now().strftime("%H:%M:%S"), "msg": msg, "type": typ
+    })
     if len(scrape_state["logs"]) > 100:
         scrape_state["logs"] = scrape_state["logs"][-50:]
 
 def _do_scrape(account_index=None):
     global scrape_state
     scrape_state.update(running=True, connected=False, current_account="",
-                        message="Ligando motor...", progress=0, total=0, current="", logs=[])
+                        message="Iniciando...", progress=0, total=0, current="", logs=[])
 
     cfg = get_cfg()
     accounts = jload(ACCOUNTS_PATH).get("accounts", [])
     targets = jload(TARGETS_PATH).get("targets", [])
 
     if not accounts:
-        scrape_state["message"] = "Erro: Nenhuma conta cadastrada"
-        scrape_state["running"] = False
+        scrape_state.update(running=False, message="Erro: Nenhuma conta cadastrada")
         _add_log("Nenhuma conta cadastrada", "error")
         return
     if not targets:
-        scrape_state["message"] = "Erro: Nenhum perfil alvo cadastrado"
-        scrape_state["running"] = False
-        _add_log("Nenhum perfil alvo cadastrado", "error")
+        scrape_state.update(running=False, message="Erro: Nenhum alvo cadastrado")
+        _add_log("Nenhum alvo cadastrado", "error")
         return
 
     accs = [accounts[account_index]] if account_index is not None else accounts
     active_targets = [t for t in targets if t.get("active", True)]
 
     if not active_targets:
-        scrape_state["message"] = "Erro: Nenhum alvo ativo"
-        scrape_state["running"] = False
+        scrape_state.update(running=False, message="Erro: Nenhum alvo ativo")
         _add_log("Nenhum alvo ativo", "error")
         return
 
+    from instagrapi.exceptions import LoginRequired, PleaseWaitFewMinutes, ClientError
+
     for acc in accs:
-        if not acc.get("active", True):
-            continue
+        if not acc.get("active", True): continue
 
-        un = acc['username']
-        pw = acc['password']
+        un, pw = acc['username'], acc['password']
         scrape_state["current_account"] = un
-        scrape_state["message"] = f"Conectando @{un}..."
-        _add_log(f"Tentando login em @{un}...")
+        scrape_state["message"] = f"Logando @{un}..."
+        _add_log(f"Conectando @{un}...")
 
-        cl_global = None
-        # Tentar importar instagrapi
-        try:
-            from instagrapi import Client as IGClient
-            from instagrapi.exceptions import LoginRequired, PleaseWaitFewMinutes, ClientError
-            cl = IGClient()
-            cl.set_user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            sf = f"{SESSIONS_DIR}/{un}.json"
-            if os.path.exists(sf):
-                try:
-                    cl.load_settings(sf)
-                    cl.login(un, pw)
-                except:
-                    cl.login(un, pw)
-                    cl.dump_settings(sf)
-            else:
-                cl.login(un, pw)
-                cl.dump_settings(sf)
-
-            scrape_state["connected"] = True
-            _add_log(f"Login OK @{un}")
-        except Exception as e:
-            _add_log(f"Falha login @{un}: {e}", "error")
-            scrape_state["message"] = f"Falha login @{un}"
+        cl, err = ig_login(un, pw)
+        if err:
+            scrape_state["message"] = f"Falha @{un}: {err}"
+            _add_log(f"Falha login @{un}: {err}", "error")
             continue
+
+        scrape_state["connected"] = True
+        _add_log(f"Login OK @{un}", "success")
 
         for tgt in active_targets:
             tu = tgt['username']
             scrape_state["message"] = f"Buscando @{tu}..."
             scrape_state["current"] = f"@{tu}"
-            _add_log(f"Iniciando @{tu}...")
+            _add_log(f"Procurando @{tu}...")
 
             try:
                 uid = cl.user_id_from_username(tu)
-            except:
+            except Exception as e:
                 _add_log(f"@{tu} nao encontrado", "error")
                 continue
 
             try:
                 medias = cl.user_medias(uid, amount=cfg.get("posts_per_profile", 15))
+            except LoginRequired:
+                _add_log(f"Sessao expirada, relogando...", "error")
+                cl2, err2 = ig_login(un, pw)
+                if err2: continue
+                cl = cl2
+                try:
+                    medias = cl.user_medias(uid, amount=cfg.get("posts_per_profile", 15))
+                except Exception as e2:
+                    _add_log(f"Erro buscar @{tu}: {e2}", "error")
+                    continue
+            except PleaseWaitFewMinutes:
+                _add_log("Rate limit, esperando 5min...", "error")
+                time.sleep(300)
+                continue
             except Exception as e:
-                _add_log(f"Erro buscar @{tu}: {e}", "error")
+                _add_log(f"Erro @{tu}: {e}", "error")
                 continue
 
             scrape_state["total"] = len(medias)
-            _add_log(f"@{tu}: {len(medias)} midias encontradas")
+            _add_log(f"@{tu}: {len(medias)} midias encontradas", "success")
 
             folder = f"{DOWNLOADS_DIR}/{tu}"
             os.makedirs(folder, exist_ok=True)
@@ -201,9 +241,7 @@ def _do_scrape(account_index=None):
 
             for i, m in enumerate(medias):
                 scrape_state["progress"] = i + 1
-
-                if is_downloaded(m.id):
-                    continue
+                if is_downloaded(m.id): continue
 
                 date_str = m.taken_at.strftime("%Y%m%d_%H%M%S")
                 path = None
@@ -215,7 +253,7 @@ def _do_scrape(account_index=None):
                     elif m.media_type == 2:
                         path = cl.video_download(m.id, folder=folder, filename=f"{tu}_{date_str}")
                         mtype = 'video'
-                    elif m.media_type == 8:  # carousel
+                    elif m.media_type == 8:
                         resources = cl.media_resources(m.id)
                         for j, res in enumerate(resources):
                             try:
@@ -227,38 +265,36 @@ def _do_scrape(account_index=None):
                                     mtype = 'video'
                                 add_download({'media_id': res.id, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': m.taken_at.isoformat()})
                                 downloaded_count += 1
-                                _add_log(f"Download: {os.path.basename(path)}", "success")
-                            except:
-                                pass
+                                _add_log(f"OK: {os.path.basename(path)}", "success")
+                            except: pass
                         continue
 
                     add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': m.taken_at.isoformat()})
                     downloaded_count += 1
-                    _add_log(f"Download: {os.path.basename(path)}", "success")
+                    _add_log(f"OK: {os.path.basename(path)}", "success")
 
                     if m.media_type == 2 and hasattr(m, 'video_duration'):
                         time.sleep(min(m.video_duration + 3, 60))
                     else:
                         time.sleep(3 + random.random() * 7)
 
-                except Exception as e:
+                except PleaseWaitFewMinutes:
+                    _add_log("Rate limit, pausa 5min", "error"); time.sleep(300)
+                except ClientError as e:
                     es = str(e)
-                    _add_log(f"Erro: {es[:80]}", "error")
                     if "429" in es:
-                        time.sleep(120)
-                    elif "PleaseWaitFewMinutes" in es:
-                        time.sleep(300)
-                    continue
+                        _add_log("Rate limit, pausa 2min", "error"); time.sleep(120)
+                    else:
+                        _add_log(f"Erro: {es[:80]}", "error")
+                except Exception as e:
+                    _add_log(f"Erro: {str(e)[:80]}", "error")
 
-            _add_log(f"@{tu}: {downloaded_count} baixados", "success")
+            _add_log(f"@{tu}: concluido ({downloaded_count} baixados)", "success")
             time.sleep(10 + random.random() * 10)
 
-    total_logs = sum(1 for l in scrape_state["logs"] if l["type"] == "success")
-    scrape_state["running"] = False
-    scrape_state["connected"] = False
-    scrape_state["current"] = ""
-    scrape_state["message"] = f"Finalizado: {total_logs} downloads"
-    _add_log("Scraping concluido", "success")
+    scrape_state.update(running=False, connected=False, current_account="", current="")
+    _add_log("FINALIZADO", "success")
+    scrape_state["message"] = "Concluido!"
 
 # ─── API ROUTES ───────────────────────────────────────────────────────────────
 @app.route("/api/login", methods=["POST"])
@@ -266,27 +302,15 @@ def api_login():
     data = request.get_json()
     username = data.get("username", "").strip()
     password = data.get("password", "").strip()
+
     if not username or not password:
         return jsonify({"ok": False, "msg": "Preencha todos os campos"})
 
-    try:
-        from instagrapi import Client as IGClient
-        cl = IGClient()
-        cl.set_user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        sf = f"{SESSIONS_DIR}/{username}.json"
-        if os.path.exists(sf):
-            try:
-                cl.load_settings(sf)
-                cl.login(username, password)
-            except:
-                cl.login(username, password)
-                cl.dump_settings(sf)
-        else:
-            cl.login(username, password)
-            cl.dump_settings(sf)
-    except Exception as e:
-        return jsonify({"ok": False, "msg": f"Falha no login: {e}"})
+    cl, err = ig_login(username, password)
+    if err:
+        return jsonify({"ok": False, "msg": err})
 
+    # Salva/atualiza nos accounts.json
     accs = jload(ACCOUNTS_PATH)
     found = False
     for a in accs.get("accounts", []):
@@ -305,6 +329,7 @@ def api_login():
     global scrape_state
     scrape_state["connected"] = True
     scrape_state["current_account"] = username
+
     return jsonify({"ok": True, "msg": f"Conectado como @{username}", "username": username})
 
 @app.route("/api/logout", methods=["POST"])
@@ -316,7 +341,10 @@ def api_logout():
 
 @app.route("/api/session")
 def api_session():
-    return jsonify({"connected": scrape_state["connected"], "current_account": scrape_state["current_account"]})
+    return jsonify({
+        "connected": scrape_state["connected"],
+        "current_account": scrape_state["current_account"]
+    })
 
 @app.route("/api/accounts", methods=["GET", "POST", "DELETE"])
 def api_accounts():
@@ -362,9 +390,8 @@ def api_targets():
 
 @app.route("/api/toggle-account", methods=["POST"])
 def api_toggle_account():
-    data = request.get_json()
     accs = jload(ACCOUNTS_PATH)
-    idx = data.get("index")
+    idx = request.get_json().get("index")
     if idx is not None and 0 <= idx < len(accs.get("accounts", [])):
         accs["accounts"][idx]["active"] = not accs["accounts"][idx].get("active", True)
         jsave(ACCOUNTS_PATH, accs)
@@ -372,9 +399,8 @@ def api_toggle_account():
 
 @app.route("/api/toggle-target", methods=["POST"])
 def api_toggle_target():
-    data = request.get_json()
     t = jload(TARGETS_PATH)
-    idx = data.get("index")
+    idx = request.get_json().get("index")
     if idx is not None and 0 <= idx < len(t.get("targets", [])):
         t["targets"][idx]["active"] = not t["targets"][idx].get("active", True)
         jsave(TARGETS_PATH, t)
@@ -385,9 +411,7 @@ def api_scrape():
     global scrape_state
     if scrape_state["running"]:
         return jsonify({"ok": False, "msg": "Scraping ja esta rodando"})
-    data = request.get_json() or {}
-    idx = data.get("account_index")
-    threading.Thread(target=_do_scrape, args=(idx,), daemon=True).start()
+    threading.Thread(target=_do_scrape, daemon=True).start()
     return jsonify({"ok": True, "msg": "Scraping iniciado!"})
 
 @app.route("/api/status")
@@ -402,9 +426,8 @@ def api_stats():
 def api_config():
     if request.method == "GET":
         return jsonify(get_cfg())
-    data = request.get_json()
     cfg = get_cfg()
-    cfg.update(data)
+    cfg.update(request.get_json())
     jsave(CONFIG_PATH, cfg)
     return jsonify({"ok": True})
 
@@ -445,7 +468,7 @@ if __name__ == "__main__":
     init_db()
     init_files()
     print("\n" + "=" * 55)
-    print("  IG-SCRAPER-PRO v4.0  |  WEB DASHBOARD")
+    print("  IG-SCRAPER-PRO v5.0  |  WEB DASHBOARD")
     print("=" * 55)
     print("  http://localhost:5000")
     print("=" * 55 + "\n")

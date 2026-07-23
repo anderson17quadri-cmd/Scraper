@@ -249,8 +249,9 @@ header {
     <div class="icon">🔐</div>
     <h2>Login no Instagram</h2>
     <p>Use uma conta descartavel para comecar a baixar</p>
-    <input type="text" id="login-user" placeholder="Usuario" autocomplete="off">
-    <input type="password" id="login-pass" placeholder="Senha">
+    <div id="login-error" style="display:none;background:var(--red-bg);color:var(--red);padding:8px 12px;border-radius:6px;font-size:0.8rem;margin-bottom:10px;border:1px solid rgba(239,68,68,0.3);"></div>
+    <input type="text" id="login-user" placeholder="Usuario" autocomplete="off" onkeydown="if(event.key==='Enter')$('login-pass').focus()">
+    <input type="password" id="login-pass" placeholder="Senha" onkeydown="if(event.key==='Enter')doLogin()">
     <button class="btn btn-primary btn-full btn-lg" onclick="doLogin()" id="btn-login">
       Entrar no Instagram
     </button>
@@ -268,6 +269,7 @@ header {
     <span id="header-badge" class="status-badge offline">
       <span class="status-dot red"></span> Desconectado
     </span>
+    <button class="btn btn-ghost btn-xs" id="btn-logout" onclick="doLogout()" style="display:none;">Sair</button>
   </div>
 </header>
 
@@ -416,27 +418,42 @@ function skipLogin() { $('overlay').classList.add('hidden'); }
 async function doLogin() {
   const u = $('login-user').value.trim();
   const p = $('login-pass').value.trim();
-  if (!u || !p) return toast('Preencha usuario e senha', 'err');
+  $('login-error').style.display = 'none';
+
+  if (!u || !p) {
+    $('login-error').textContent = 'Preencha usuario e senha';
+    $('login-error').style.display = '';
+    return;
+  }
 
   $('btn-login').disabled = true;
   $('btn-login').textContent = 'Conectando...';
 
-  const r = await api('/api/login', {method:'POST', body:JSON.stringify({username:u, password:p})});
-  $('btn-login').disabled = false;
-  $('btn-login').textContent = 'Entrar no Instagram';
+  try {
+    const r = await api('/api/login', {method:'POST', body:JSON.stringify({username:u, password:p})});
+    $('btn-login').disabled = false;
+    $('btn-login').textContent = 'Entrar no Instagram';
 
-  if (r.ok) {
-    loggedIn = true;
-    currentUser = r.username;
-    $('overlay').classList.add('hidden');
-    $('header-badge').className = 'status-badge online';
-    $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+r.username;
-    $('s-session-text').textContent = 'On';
-    $('s-session-user').textContent = '@'+r.username;
-    toast(r.msg);
-    refreshAll();
-  } else {
-    toast(r.msg, 'err');
+    if (r.ok) {
+      loggedIn = true;
+      currentUser = r.username;
+      $('overlay').classList.add('hidden');
+      $('header-badge').className = 'status-badge online';
+      $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+r.username;
+      $('s-session-text').textContent = 'On';
+      $('s-session-user').textContent = '@'+r.username;
+      $('btn-logout').style.display = '';
+      toast(r.msg);
+      refreshAll();
+    } else {
+      $('login-error').textContent = r.msg || 'Erro ao fazer login';
+      $('login-error').style.display = '';
+    }
+  } catch(e) {
+    $('btn-login').disabled = false;
+    $('btn-login').textContent = 'Entrar no Instagram';
+    $('login-error').textContent = 'Erro de conexao com o servidor';
+    $('login-error').style.display = '';
   }
 }
 
@@ -447,6 +464,8 @@ async function doLogout() {
   $('header-badge').innerHTML = '<span class="status-dot red"></span> Desconectado';
   $('s-session-text').textContent = 'Off';
   $('s-session-user').textContent = 'nao conectado';
+  $('btn-logout').style.display = 'none';
+  $('overlay').classList.remove('hidden');
   toast('Desconectado');
 }
 
@@ -571,6 +590,7 @@ async function refreshAll() {
     $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+sess.current_account;
     $('s-session-text').textContent = 'On';
     $('s-session-user').textContent = '@'+sess.current_account;
+    $('btn-logout').style.display = '';
     $('overlay').classList.add('hidden');
   } else if (!loggedIn) {
     $('header-badge').className = 'status-badge offline';
