@@ -243,22 +243,21 @@ def _do_scrape(account_index=None, target_index=None):
 
                     try:
                         if m.media_type == 1:
-                            path = cl.photo_download(m.id, folder=folder, filename=f"{tu}_{date_str}")
+                            path = cl.photo_download_by_url(m.thumbnail_url, filename=f"{tu}_{date_str}", folder=folder)
                             mtype = 'photo'
                         elif m.media_type == 2:
-                            path = cl.video_download(m.id, folder=folder, filename=f"{tu}_{date_str}")
+                            path = cl.video_download_by_url(m.video_url, filename=f"{tu}_{date_str}", folder=folder)
                             mtype = 'video'
                         elif m.media_type == 8:  # carousel
-                            resources = cl.media_resources(m.id)
-                            for j, res in enumerate(resources):
+                            for j, res in enumerate(m.resources):
                                 try:
                                     if res.media_type == 1:
-                                        path = cl.photo_download(res.id, folder=folder, filename=f"{tu}_{date_str}_c{j}")
+                                        path = cl.photo_download_by_url(res.thumbnail_url, filename=f"{tu}_{date_str}_c{j}", folder=folder)
                                         mtype = 'photo'
                                     else:
-                                        path = cl.video_download(res.id, folder=folder, filename=f"{tu}_{date_str}_c{j}")
+                                        path = cl.video_download_by_url(res.video_url, filename=f"{tu}_{date_str}_c{j}", folder=folder)
                                         mtype = 'video'
-                                    add_download({'media_id': res.id, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': m.taken_at.isoformat()})
+                                    add_download({'media_id': res.pk, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': m.taken_at.isoformat()})
                                     downloaded_count += 1
                                     _add_log(f"Download: {os.path.basename(path)}", "success")
                                 except:

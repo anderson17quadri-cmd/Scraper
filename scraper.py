@@ -64,24 +64,23 @@ class InstagramScraper:
                     date_str = media.taken_at.strftime("%Y%m%d_%H%M%S")
                     
                     if media.media_type == 1:
-                        path = self.client.photo_download(media.id, folder=profile_folder, filename=f"{username}_{date_str}")
+                        path = self.client.photo_download_by_url(media.thumbnail_url, filename=f"{username}_{date_str}", folder=profile_folder)
                         media_type = 'photo'
                     elif media.media_type == 2:
-                        path = self.client.video_download(media.id, folder=profile_folder, filename=f"{username}_{date_str}")
+                        path = self.client.video_download_by_url(media.video_url, filename=f"{username}_{date_str}", folder=profile_folder)
                         media_type = 'video'
                     elif media.media_type == 8:
-                        resources = self.client.media_resources(media.id)
-                        for j, res in enumerate(resources, 1):
+                        for j, res in enumerate(media.resources, 1):
                             try:
                                 if res.media_type == 1:
-                                    path = self.client.photo_download(res.id, folder=profile_folder, filename=f"{username}_{date_str}_c{j}")
+                                    path = self.client.photo_download_by_url(res.thumbnail_url, filename=f"{username}_{date_str}_c{j}", folder=profile_folder)
                                     media_type = 'photo'
                                 else:
-                                    path = self.client.video_download(res.id, folder=profile_folder, filename=f"{username}_{date_str}_c{j}")
+                                    path = self.client.video_download_by_url(res.video_url, filename=f"{username}_{date_str}_c{j}", folder=profile_folder)
                                     media_type = 'video'
-                                
+
                                 self.db.add_download({
-                                    'media_id': res.id,
+                                    'media_id': res.pk,
                                     'username': username,
                                     'file': os.path.basename(path),
                                     'type': media_type,
