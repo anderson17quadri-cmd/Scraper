@@ -4,7 +4,7 @@ IG-SCRAPER-PRO v4.0 - Web Dashboard
 python app.py  ->  http://localhost:5000
 """
 
-import os, json, time, threading, sqlite3, random, zipfile
+import os, json, time, threading, sqlite3, random, zipfile, re
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from ig_auth import login_account, login_by_sessionid, translate_ig_error
@@ -124,11 +124,49 @@ scrape_state = {"running": False, "connected": False, "current_account": "",
                 "message": "Pronto", "progress": 0, "total": 0, "current": "", "logs": [],
                 "stop_requested": False, "zip_url": None}
 
-# cache em memoria: username-alvo -> {"cl": Client autenticado, "uid":..,
-# "medias": [Media,...], "end_cursor": str|None}
-# preenchido por /api/preview(-more) e consumido por /api/download-selected
+# cache em memoria: cache_key -> {"cl":.., "medias":[...], "kind": "post"|"story",
+# "target":.., "label":.., "folder":.., "uid":.. , "end_cursor":..}
+# preenchido por /api/preview*, /api/stories e /api/highlight-items;
+# consumido por /api/download-selected
 preview_cache = {}
 PREVIEW_PAGE_SIZE = 30
+
+# conta-nossa (username) -> Client ja autenticado, reaproveitado entre
+# chamadas de preview/stories/destaques pra nao relogar toda hora
+active_clients = {}
+
+def _get_client(acc_idx):
+    accounts = jload(ACCOUNTS_PATH).get("accounts", [])
+    if not accounts:
+        raise ValueError("Nenhuma conta cadastrada")
+    if acc_idx in (None, ""):
+        acc_idx = next((i for i, a in enumerate(accounts) if a.get("active", True)), None)
+    else:
+        acc_idx = int(acc_idx)
+    if acc_idx is None or not (0 <= acc_idx < len(accounts)):
+        raise ValueError("Nenhuma conta valida")
+    acc = accounts[acc_idx]
+    un = acc["username"]
+    cl = active_clients.get(un)
+    if cl is None:
+        cl = login_account(acc, f"{SESSIONS_DIR}/{un}.json")
+        active_clients[un] = cl
+    return cl
+
+def _safe_name(s):
+    return re.sub(r'[^\w\-. ]', '_', str(s)).strip()[:60] or "destaque"
+
+def _highlight_cover_url(cover):
+    """cover_media do Highlight vem como dict cru da API do Instagram, nao
+    como objeto Media -- tenta achar a url da imagem em algumas chaves
+    conhecidas e desiste (None) sem quebrar se o formato mudar."""
+    if not isinstance(cover, dict):
+        return None
+    for key in ("cropped_image_version", "full_image_version"):
+        v = cover.get(key)
+        if isinstance(v, dict) and v.get("url"):
+            return str(v["url"])
+    return None
 
 def _media_preview_item(m):
     thumb = m.thumbnail_url or (m.resources[0].thumbnail_url if m.media_type == 8 and m.resources else None)
@@ -138,6 +176,15 @@ def _media_preview_item(m):
         "thumbnail": str(thumb) if thumb else None,
         "date": m.taken_at.isoformat(),
         "already": is_downloaded(m.id),
+    }
+
+def _story_preview_item(s):
+    return {
+        "id": str(s.id),
+        "type": "video" if s.media_type == 2 else "photo",
+        "thumbnail": str(s.thumbnail_url) if s.thumbnail_url else None,
+        "date": s.taken_at.isoformat() if getattr(s, "taken_at", None) else None,
+        "already": is_downloaded(s.id),
     }
 
 def _make_zip(target, paths):
@@ -194,6 +241,28 @@ def _download_one(cl, tu, m, folder):
                     saved_paths.append(str(path))
                 except Exception:
                     pass
+    except Exception as e:
+        es = str(e)
+        _add_log(f"Erro: {es[:80]}", "error")
+        if "429" in es:
+            time.sleep(120)
+        elif "PleaseWaitFewMinutes" in es:
+            time.sleep(300)
+    return saved_paths
+
+def _download_story_item(cl, tu, s, folder):
+    """Baixa um item de story/destaque (foto ou video), ja na maior
+    resolucao disponivel. Retorna a lista de caminhos salvos."""
+    date_str = (s.taken_at.strftime("%Y%m%d_%H%M%S") if getattr(s, "taken_at", None)
+                else datetime.now().strftime("%Y%m%d_%H%M%S"))
+    saved_paths = []
+    try:
+        url = s.thumbnail_url if s.media_type == 1 else s.video_url
+        mtype = 'photo' if s.media_type == 1 else 'video'
+        path = cl.story_download_by_url(url, filename=f"{tu}_story_{date_str}", folder=folder)
+        add_download({'media_id': s.id, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': datetime.now().isoformat()})
+        _add_log(f"Download: {os.path.basename(path)}", "success")
+        saved_paths.append(str(path))
     except Exception as e:
         es = str(e)
         _add_log(f"Erro: {es[:80]}", "error")
@@ -471,23 +540,10 @@ def api_preview():
     if not target_username:
         return jsonify({"ok": False, "msg": "Informe o perfil alvo"})
 
-    accounts = jload(ACCOUNTS_PATH).get("accounts", [])
-    if not accounts:
-        return jsonify({"ok": False, "msg": "Nenhuma conta cadastrada"})
-
-    acc_idx = data.get("account_index")
-    if acc_idx in (None, ""):
-        acc_idx = next((i for i, a in enumerate(accounts) if a.get("active", True)), None)
-    else:
-        acc_idx = int(acc_idx)
-    if acc_idx is None or not (0 <= acc_idx < len(accounts)):
-        return jsonify({"ok": False, "msg": "Nenhuma conta valida"})
-    acc = accounts[acc_idx]
-
     try:
-        cl = login_account(acc, f"{SESSIONS_DIR}/{acc['username']}.json")
+        cl = _get_client(data.get("account_index"))
     except Exception as e:
-        return jsonify({"ok": False, "msg": translate_ig_error(e)})
+        return jsonify({"ok": False, "msg": str(e)})
 
     try:
         uid = cl.user_id_from_username(target_username)
@@ -495,20 +551,25 @@ def api_preview():
     except Exception as e:
         return jsonify({"ok": False, "msg": f"Erro ao buscar @{target_username}: {e}"})
 
-    preview_cache[target_username] = {"cl": cl, "uid": uid, "medias": list(medias), "end_cursor": end_cursor}
+    cache_key = target_username
+    preview_cache[cache_key] = {
+        "cl": cl, "uid": uid, "medias": list(medias), "end_cursor": end_cursor,
+        "kind": "post", "target": target_username, "label": f"@{target_username}",
+        "folder": f"{DOWNLOADS_DIR}/{target_username}",
+    }
 
     return jsonify({
         "ok": True,
         "items": [_media_preview_item(m) for m in medias],
-        "target": target_username,
+        "cache_key": cache_key,
         "has_more": bool(end_cursor),
     })
 
 @app.route("/api/preview-more", methods=["POST"])
 def api_preview_more():
     data = request.get_json() or {}
-    target_username = (data.get("target_username") or "").strip()
-    cache = preview_cache.get(target_username)
+    cache_key = (data.get("cache_key") or data.get("target_username") or "").strip()
+    cache = preview_cache.get(cache_key)
     if not cache:
         return jsonify({"ok": False, "msg": "Preview expirado, busque de novo."})
     if not cache.get("end_cursor"):
@@ -529,15 +590,97 @@ def api_preview_more():
         "has_more": bool(end_cursor),
     })
 
+@app.route("/api/stories", methods=["POST"])
+def api_stories():
+    data = request.get_json() or {}
+    target_username = (data.get("target_username") or "").strip().lstrip("@")
+    if not target_username:
+        return jsonify({"ok": False, "msg": "Informe o perfil alvo"})
+
+    try:
+        cl = _get_client(data.get("account_index"))
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)})
+
+    try:
+        uid = cl.user_id_from_username(target_username)
+        stories = cl.user_stories(uid)
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Erro ao buscar stories de @{target_username}: {e}"})
+
+    cache_key = f"{target_username}:stories"
+    preview_cache[cache_key] = {
+        "cl": cl, "medias": list(stories), "kind": "story",
+        "target": target_username, "label": f"@{target_username} (stories)",
+        "folder": f"{DOWNLOADS_DIR}/{target_username}/stories",
+    }
+
+    msg = None if stories else "Sem stories ativos agora (expiram em 24h)"
+    return jsonify({"ok": True, "items": [_story_preview_item(s) for s in stories], "cache_key": cache_key, "msg": msg})
+
+@app.route("/api/highlights", methods=["POST"])
+def api_highlights():
+    data = request.get_json() or {}
+    target_username = (data.get("target_username") or "").strip().lstrip("@")
+    if not target_username:
+        return jsonify({"ok": False, "msg": "Informe o perfil alvo"})
+
+    try:
+        cl = _get_client(data.get("account_index"))
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)})
+
+    try:
+        uid = cl.user_id_from_username(target_username)
+        highlights = cl.user_highlights(uid)
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Erro ao buscar destaques de @{target_username}: {e}"})
+
+    items = [{
+        "id": str(h.pk),
+        "title": h.title or "Destaque",
+        "cover": _highlight_cover_url(h.cover_media),
+        "count": h.media_count,
+    } for h in highlights]
+    return jsonify({"ok": True, "items": items, "target": target_username})
+
+@app.route("/api/highlight-items", methods=["POST"])
+def api_highlight_items():
+    data = request.get_json() or {}
+    highlight_id = str(data.get("highlight_id") or "").strip()
+    target_username = (data.get("target_username") or "").strip().lstrip("@")
+    title = (data.get("title") or "").strip()
+    if not highlight_id or not target_username:
+        return jsonify({"ok": False, "msg": "Dados invalidos"})
+
+    try:
+        cl = _get_client(data.get("account_index"))
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)})
+
+    try:
+        highlight = cl.highlight_info(highlight_id)
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Erro ao abrir destaque: {e}"})
+
+    cache_key = f"highlight:{highlight_id}"
+    preview_cache[cache_key] = {
+        "cl": cl, "medias": list(highlight.items), "kind": "story",
+        "target": target_username, "label": f"@{target_username} › {title or highlight.title}",
+        "folder": f"{DOWNLOADS_DIR}/{target_username}/highlights/{_safe_name(title or highlight.title)}",
+    }
+
+    return jsonify({"ok": True, "items": [_story_preview_item(s) for s in highlight.items], "cache_key": cache_key})
+
 @app.route("/api/download-selected", methods=["POST"])
 def api_download_selected():
     global scrape_state
     if scrape_state["running"]:
         return jsonify({"ok": False, "msg": "Scraping ja esta rodando"})
     data = request.get_json() or {}
-    target_username = (data.get("target_username") or "").strip()
+    cache_key = (data.get("cache_key") or data.get("target_username") or "").strip()
     ids = set(str(i) for i in data.get("media_ids", []))
-    cache = preview_cache.get(target_username)
+    cache = preview_cache.get(cache_key)
     if not cache or not ids:
         return jsonify({"ok": False, "msg": "Nada selecionado ou preview expirado. Busque de novo."})
 
@@ -545,16 +688,22 @@ def api_download_selected():
     if not selected:
         return jsonify({"ok": False, "msg": "Selecao invalida, busque de novo."})
 
-    threading.Thread(target=_do_selected_download, args=(cache["cl"], target_username, selected), daemon=True).start()
+    threading.Thread(target=_do_selected_download, args=(cache, selected), daemon=True).start()
     return jsonify({"ok": True, "msg": f"Baixando {len(selected)} selecionados..."})
 
-def _do_selected_download(cl, tu, medias):
+def _do_selected_download(cache, medias):
     global scrape_state
+    cl = cache["cl"]
+    folder = cache["folder"]
+    kind = cache.get("kind", "post")
+    label = cache.get("label", "selecionados")
+    tu = cache.get("target", "midia").lstrip("@") or "midia"
+    downloader = _download_one if kind == "post" else _download_story_item
+
     scrape_state.update(running=True, connected=True, current_account=getattr(cl, "username", "") or "",
-                        message=f"Baixando selecionados de @{tu}...", progress=0,
-                        total=len(medias), current=f"@{tu}", logs=[], stop_requested=False,
+                        message=f"Baixando selecionados de {label}...", progress=0,
+                        total=len(medias), current=label, logs=[], stop_requested=False,
                         zip_url=None)
-    folder = f"{DOWNLOADS_DIR}/{tu}"
     os.makedirs(folder, exist_ok=True)
     all_saved = []
     try:
@@ -564,7 +713,7 @@ def _do_selected_download(cl, tu, medias):
             scrape_state["progress"] = i + 1
             if is_downloaded(m.id):
                 continue
-            saved = _download_one(cl, tu, m, folder)
+            saved = downloader(cl, tu, m, folder)
             all_saved.extend(saved)
             if saved:
                 _human_delay_after(m)

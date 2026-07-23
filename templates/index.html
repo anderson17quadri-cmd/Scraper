@@ -184,6 +184,9 @@ header {
 }
 
 /* ─── PREVIEW GRID ──────────────────────────────────────── */
+.preview-tabs { display:flex; gap:6px; margin-bottom:12px; }
+.preview-tab { flex:1; }
+.preview-tab.active { background:var(--cyan); color:#000; border-color:var(--cyan); }
 .preview-actions { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
 .preview-grid {
   display:grid; grid-template-columns:repeat(auto-fill, minmax(84px, 1fr)); gap:8px;
@@ -405,8 +408,28 @@ header {
     <div class="card-header"><span class="card-title">Pre-visualizar e selecionar</span></div>
     <div class="input-row" style="margin-bottom:10px;">
       <input class="input" id="preview-target" placeholder="Perfil (sem @)...">
-      <button class="btn btn-primary" onclick="loadPreview()" id="btn-preview-load">Buscar</button>
+      <button class="btn btn-primary" onclick="searchProfile()" id="btn-preview-load">Buscar</button>
     </div>
+
+    <div id="preview-tabs" class="preview-tabs" hidden>
+      <button class="btn btn-ghost btn-xs preview-tab active" data-mode="posts" onclick="switchPreviewMode('posts')">📷 Posts</button>
+      <button class="btn btn-ghost btn-xs preview-tab" data-mode="stories" onclick="switchPreviewMode('stories')">⏱ Stories</button>
+      <button class="btn btn-ghost btn-xs preview-tab" data-mode="highlights" onclick="switchPreviewMode('highlights')">⭐ Destaques</button>
+    </div>
+
+    <div id="highlight-back" hidden style="margin-bottom:8px;">
+      <button class="btn btn-ghost btn-xs" onclick="backToHighlightsList()">← Destaques</button>
+      <span id="highlight-current-title" style="font-weight:600;margin-left:8px;font-size:0.85rem;"></span>
+    </div>
+    <div id="highlights-list" hidden></div>
+
+    <div id="preview-type-filter" class="preview-tabs" hidden>
+      <button class="btn btn-ghost btn-xs preview-tab type-filter active" data-type="all" onclick="setTypeFilter('all')">Todos</button>
+      <button class="btn btn-ghost btn-xs preview-tab type-filter" data-type="photo" onclick="setTypeFilter('photo')">📷 Fotos</button>
+      <button class="btn btn-ghost btn-xs preview-tab type-filter" data-type="video" onclick="setTypeFilter('video')">🎬 Videos</button>
+      <button class="btn btn-ghost btn-xs preview-tab type-filter" data-type="carousel" onclick="setTypeFilter('carousel')">🖼️+ Carrossel</button>
+    </div>
+
     <div id="preview-actions" class="preview-actions" hidden>
       <button class="btn btn-ghost btn-xs" onclick="selectAllPreview(true)">Selecionar tudo</button>
       <button class="btn btn-ghost btn-xs" onclick="selectAllPreview(false)">Limpar selecao</button>
@@ -650,47 +673,99 @@ async function stopScrape() {
   toast(r.msg, r.ok ? 'ok' : 'err');
 }
 
-// ─── PREVIEW / SELECAO ───────────────────────────────────────────────────────
+// ─── PREVIEW / SELECAO (posts, stories, destaques) ───────────────────────────
+let previewTarget = '';
+let previewMode = 'posts';
 let previewItems = [];
 let previewSelected = new Set();
-let previewTarget = '';
+let previewCacheKey = '';
+let previewTypeFilter = 'all';
+let highlightsList = [];
 let lastZipUrl = null;
 
-async function loadPreview() {
+function previewAccountBody() {
+  const accVal = $('scrape-account').value;
+  const body = {target_username: previewTarget};
+  if (accVal !== '') body.account_index = parseInt(accVal);
+  return body;
+}
+
+function setTypeFilter(t) {
+  previewTypeFilter = t;
+  document.querySelectorAll('.type-filter').forEach(b => b.classList.toggle('active', b.dataset.type === t));
+  renderPreview();
+}
+
+function visiblePreviewItems() {
+  if (previewTypeFilter === 'all') return previewItems;
+  return previewItems.filter(it => it.type === previewTypeFilter);
+}
+
+function resetPreviewGrid() {
+  previewItems = [];
+  previewSelected = new Set();
+  previewCacheKey = '';
+  previewTypeFilter = 'all';
+  document.querySelectorAll('.type-filter').forEach(b => b.classList.toggle('active', b.dataset.type === 'all'));
+  $('preview-grid').innerHTML = '';
+  $('preview-actions').hidden = true;
+  $('preview-type-filter').hidden = true;
+  $('btn-preview-more').hidden = true;
+  $('preview-zip').hidden = true;
+}
+
+async function searchProfile() {
   const t = $('preview-target').value.trim().replace(/^@/, '');
   if (!t) return toast('Digite o perfil alvo', 'err');
   previewTarget = t;
+  $('highlight-back').hidden = true;
+  $('highlights-list').hidden = true;
+  $('preview-tabs').hidden = false;
+  setActiveTab('posts');
+  await loadPostsPreview();
+}
 
+function setActiveTab(mode) {
+  previewMode = mode;
+  document.querySelectorAll('.preview-tab').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+}
+
+async function switchPreviewMode(mode) {
+  setActiveTab(mode);
+  $('highlight-back').hidden = true;
+  $('highlights-list').hidden = true;
+  if (mode === 'posts') await loadPostsPreview();
+  else if (mode === 'stories') await loadStoriesPreview();
+  else if (mode === 'highlights') await loadHighlightsList();
+}
+
+async function loadPostsPreview() {
+  resetPreviewGrid();
   $('btn-preview-load').disabled = true;
-  $('btn-preview-load').textContent = 'Buscando...';
-  $('preview-grid').innerHTML = '<div class="empty"><p>Buscando midias...</p></div>';
-  $('preview-actions').hidden = true;
+  $('preview-grid').innerHTML = '<div class="empty"><p>Buscando posts...</p></div>';
 
-  const accVal = $('scrape-account').value;
-  const body = {target_username: t};
-  if (accVal !== '') body.account_index = parseInt(accVal);
-
-  const r = await api('/api/preview', {method:'POST', body:JSON.stringify(body)});
+  const r = await api('/api/preview', {method:'POST', body:JSON.stringify(previewAccountBody())});
   $('btn-preview-load').disabled = false;
-  $('btn-preview-load').textContent = 'Buscar';
 
   if (!r.ok) {
     $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
     return toast(r.msg, 'err');
   }
+  previewCacheKey = r.cache_key;
   previewItems = r.items;
   previewSelected = new Set(previewItems.filter(i => !i.already).map(i => i.id));
   renderPreview();
   $('preview-actions').hidden = false;
+  $('preview-type-filter').hidden = false;
   $('btn-preview-more').hidden = !r.has_more;
-  toast(`${previewItems.length} midias encontradas${r.has_more ? ' (tem mais, use "Carregar mais")' : ''}`);
+  toast(`${previewItems.length} posts encontrados${r.has_more ? ' (tem mais, use "Carregar mais")' : ''}`);
 }
 
 async function loadMorePreview() {
   $('btn-preview-more').disabled = true;
   $('btn-preview-more').textContent = 'Carregando...';
 
-  const r = await api('/api/preview-more', {method:'POST', body:JSON.stringify({target_username: previewTarget})});
+  const r = await api('/api/preview-more', {method:'POST', body:JSON.stringify({cache_key: previewCacheKey})});
 
   $('btn-preview-more').disabled = false;
   $('btn-preview-more').textContent = 'Carregar mais';
@@ -705,9 +780,91 @@ async function loadMorePreview() {
   toast(`+${r.items.length} midias carregadas`);
 }
 
+async function loadStoriesPreview() {
+  resetPreviewGrid();
+  $('preview-grid').innerHTML = '<div class="empty"><p>Buscando stories...</p></div>';
+
+  const r = await api('/api/stories', {method:'POST', body:JSON.stringify(previewAccountBody())});
+  if (!r.ok) {
+    $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    return toast(r.msg, 'err');
+  }
+  previewCacheKey = r.cache_key;
+  previewItems = r.items;
+  previewSelected = new Set(previewItems.filter(i => !i.already).map(i => i.id));
+  renderPreview();
+  $('preview-actions').hidden = previewItems.length === 0;
+  $('preview-type-filter').hidden = previewItems.length === 0;
+  toast(r.msg || `${previewItems.length} stories ativos agora`);
+}
+
+async function loadHighlightsList() {
+  resetPreviewGrid();
+  $('highlights-list').hidden = false;
+  $('highlights-list').innerHTML = '<div class="empty"><p>Buscando destaques...</p></div>';
+
+  const r = await api('/api/highlights', {method:'POST', body:JSON.stringify(previewAccountBody())});
+  if (!r.ok) {
+    $('highlights-list').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    return toast(r.msg, 'err');
+  }
+  highlightsList = r.items;
+  renderHighlightsList();
+  toast(`${highlightsList.length} destaques encontrados`);
+}
+
+function renderHighlightsList() {
+  if (highlightsList.length === 0) {
+    $('highlights-list').innerHTML = '<div class="empty"><p>Nenhum destaque</p></div>';
+    return;
+  }
+  let html = '<div class="preview-grid">';
+  highlightsList.forEach((h, i) => {
+    const img = h.cover
+      ? `<img src="${h.cover}" loading="lazy">`
+      : '<div class="empty" style="padding:26px 0;font-size:1.4rem;">⭐</div>';
+    html += `<div class="preview-item" onclick="openHighlight(${i})" title="${h.title} (${h.count} itens)">
+      ${img}<span class="badge-type">⭐</span>
+    </div>`;
+  });
+  $('highlights-list').innerHTML = html + '</div>';
+}
+
+async function openHighlight(index) {
+  const h = highlightsList[index];
+  if (!h) return;
+  $('highlights-list').hidden = true;
+  $('highlight-back').hidden = false;
+  $('highlight-current-title').textContent = `${h.title} (${h.count} itens)`;
+  resetPreviewGrid();
+  $('preview-grid').innerHTML = '<div class="empty"><p>Abrindo destaque...</p></div>';
+
+  const body = previewAccountBody();
+  body.highlight_id = h.id;
+  body.title = h.title;
+  const r = await api('/api/highlight-items', {method:'POST', body:JSON.stringify(body)});
+  if (!r.ok) {
+    $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    return toast(r.msg, 'err');
+  }
+  previewCacheKey = r.cache_key;
+  previewItems = r.items;
+  previewSelected = new Set(previewItems.filter(i => !i.already).map(i => i.id));
+  renderPreview();
+  $('preview-actions').hidden = previewItems.length === 0;
+  $('preview-type-filter').hidden = previewItems.length === 0;
+}
+
+function backToHighlightsList() {
+  $('highlight-back').hidden = true;
+  $('highlights-list').hidden = false;
+  resetPreviewGrid();
+}
+
 function renderPreview() {
+  const list = visiblePreviewItems();
   let html = '';
-  previewItems.forEach(it => {
+  list.forEach(it => {
     const sel = previewSelected.has(it.id);
     const badge = it.type === 'video' ? '🎬' : it.type === 'carousel' ? '🖼️+' : '';
     const img = it.thumbnail
@@ -719,7 +876,7 @@ function renderPreview() {
       <span class="check">${it.already?'✓':(sel?'✓':'')}</span>
     </div>`;
   });
-  $('preview-grid').innerHTML = html || '<div class="empty"><p>Nenhuma midia encontrada</p></div>';
+  $('preview-grid').innerHTML = html || '<div class="empty"><p>Nenhuma midia neste filtro</p></div>';
   $('btn-download-selected').textContent = `Baixar selecionados (${previewSelected.size})`;
 }
 
@@ -731,9 +888,11 @@ function togglePreview(id) {
 }
 
 function selectAllPreview(all) {
-  previewSelected = all
-    ? new Set(previewItems.filter(i => !i.already).map(i => i.id))
-    : new Set();
+  if (all) {
+    visiblePreviewItems().filter(i => !i.already).forEach(i => previewSelected.add(i.id));
+  } else {
+    previewSelected = new Set();
+  }
   renderPreview();
 }
 
@@ -742,7 +901,7 @@ async function downloadSelected() {
   $('preview-zip').hidden = true;
   const r = await api('/api/download-selected', {
     method: 'POST',
-    body: JSON.stringify({target_username: previewTarget, media_ids: [...previewSelected]})
+    body: JSON.stringify({cache_key: previewCacheKey, media_ids: [...previewSelected]})
   });
   if (r.ok) {
     $('log-card').hidden = false;
