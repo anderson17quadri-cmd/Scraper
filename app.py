@@ -180,7 +180,6 @@ def _do_scrape(account_index=None, target_index=None):
                 from instagrapi import Client as IGClient
                 from instagrapi.exceptions import LoginRequired, PleaseWaitFewMinutes, ClientError
                 cl = IGClient()
-                cl.set_user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                 sf = f"{SESSIONS_DIR}/{un}.json"
                 if os.path.exists(sf):
                     try:
@@ -310,7 +309,6 @@ def api_login():
     try:
         from instagrapi import Client as IGClient
         cl = IGClient()
-        cl.set_user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         sf = f"{SESSIONS_DIR}/{username}.json"
         if os.path.exists(sf):
             try:
