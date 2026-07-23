@@ -369,16 +369,32 @@ def _do_scrape(account_index=None, target_index=None):
             _add_log("Nenhum alvo ativo", "error")
             return
 
-        for acc in accs:
+        # distribui os alvos entre as contas ativas em rodizio (round-robin)
+        # quando ha mais de uma conta disponivel e nenhuma foi escolhida
+        # especificamente -- assim nenhuma conta sozinha faz requisicao pra
+        # TODOS os alvos, reduzindo o risco de bloqueio por excesso de uso
+        valid_accs = [a for a in accs if a.get("active", True)
+                      and a.get('username') and (a.get('password') or a.get('sessionid'))]
+        if not valid_accs:
+            scrape_state["message"] = "Erro: Nenhuma conta ativa valida"
+            _add_log("Nenhuma conta ativa valida (sem usuario/senha/sessao)", "error")
+            return
+
+        if account_index is None and len(valid_accs) > 1:
+            assignment = [[] for _ in valid_accs]
+            for i, tgt in enumerate(active_targets):
+                assignment[i % len(valid_accs)].append(tgt)
+            _add_log(f"Alvos distribuidos entre {len(valid_accs)} contas (rodizio)")
+        else:
+            assignment = [active_targets for _ in valid_accs]
+
+        for acc, my_targets in zip(valid_accs, assignment):
             if _stopped():
                 break
-            if not acc.get("active", True):
+            if not my_targets:
                 continue
 
-            un = acc.get('username')
-            if not un or not (acc.get('password') or acc.get('sessionid')):
-                _add_log("Conta invalida (sem usuario/senha/sessao)", "error")
-                continue
+            un = acc['username']
             scrape_state["current_account"] = un
             scrape_state["message"] = f"Conectando @{un}..."
             _add_log(f"Tentando login em @{un}...")
@@ -394,7 +410,7 @@ def _do_scrape(account_index=None, target_index=None):
                 scrape_state["message"] = f"Falha login @{un}: {msg}"
                 continue
 
-            for tgt in active_targets:
+            for tgt in my_targets:
                 if _stopped():
                     break
                 tu = tgt['username']
