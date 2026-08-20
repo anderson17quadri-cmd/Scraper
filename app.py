@@ -10,7 +10,12 @@ from flask import Flask, render_template, request, jsonify, send_from_directory
 from ig_auth import login_account, login_by_sessionid, translate_ig_error
 from ig_engine_iloader import (login_iloader_account, translate_iloader_error,
                                post_preview_item as _iloader_preview_item,
-                               download_post as _iloader_download_post)
+                               download_post as _iloader_download_post,
+                               story_preview_item as _iloader_story_item,
+                               download_story_item as _iloader_download_story,
+                               fetch_stories as _iloader_fetch_stories,
+                               fetch_highlights as _iloader_fetch_highlights,
+                               highlight_summary as _iloader_highlight_summary)
 import instaloader
 
 # Quando empacotado com PyInstaller (build desktop), os templates ficam
@@ -147,6 +152,11 @@ scrape_state = {"running": False, "connected": False, "current_account": "",
 # consumido por /api/download-selected
 preview_cache = {}
 PREVIEW_PAGE_SIZE = 30
+
+# (username-alvo, id do client) -> {unique_id: objeto Highlight do Instaloader}
+# Guardado porque o Instaloader so entrega os itens de um destaque a partir
+# do proprio objeto Highlight -- nao da pra buscar so por id depois.
+iloader_highlights = {}
 
 # (conta-nossa, motor) -> Client/Instaloader ja autenticado, reaproveitado
 # entre chamadas de preview/stories/destaques pra nao relogar toda hora
@@ -800,8 +810,22 @@ def api_stories():
     except Exception as e:
         return jsonify({"ok": False, "msg": _translate_any_error(e)})
 
+    cache_key = f"{target_username}:stories"
+    cache_base = {
+        "cl": cl, "engine": engine, "kind": "story", "target": target_username,
+        "label": f"@{target_username} (stories)",
+        "folder": f"{DOWNLOADS_DIR}/{target_username}/stories",
+    }
+
     if engine == "instaloader":
-        return jsonify({"ok": False, "msg": "Stories ainda nao sao suportados no motor Instaloader. Escolha uma conta Instagrapi pra isso."})
+        try:
+            stories = _iloader_fetch_stories(cl, target_username)
+        except Exception as e:
+            return jsonify({"ok": False, "msg": f"Erro ao buscar stories de @{target_username}: {_translate_any_error(e)}"})
+        preview_cache[cache_key] = {**cache_base, "medias": stories}
+        msg = None if stories else "Sem stories ativos agora (expiram em 24h)"
+        return jsonify({"ok": True, "items": [_iloader_story_item(s, is_downloaded) for s in stories],
+                        "cache_key": cache_key, "msg": msg})
 
     try:
         uid = cl.user_id_from_username(target_username)
@@ -809,12 +833,7 @@ def api_stories():
     except Exception as e:
         return jsonify({"ok": False, "msg": f"Erro ao buscar stories de @{target_username}: {_translate_any_error(e)}"})
 
-    cache_key = f"{target_username}:stories"
-    preview_cache[cache_key] = {
-        "cl": cl, "engine": "instagrapi", "medias": list(stories), "kind": "story",
-        "target": target_username, "label": f"@{target_username} (stories)",
-        "folder": f"{DOWNLOADS_DIR}/{target_username}/stories",
-    }
+    preview_cache[cache_key] = {**cache_base, "medias": list(stories)}
 
     msg = None if stories else "Sem stories ativos agora (expiram em 24h)"
     return jsonify({"ok": True, "items": [_story_preview_item(s) for s in stories], "cache_key": cache_key, "msg": msg})
@@ -832,7 +851,15 @@ def api_highlights():
         return jsonify({"ok": False, "msg": _translate_any_error(e)})
 
     if engine == "instaloader":
-        return jsonify({"ok": False, "msg": "Destaques ainda nao sao suportados no motor Instaloader. Escolha uma conta Instagrapi pra isso."})
+        try:
+            highlights = _iloader_fetch_highlights(cl, target_username)
+        except Exception as e:
+            return jsonify({"ok": False, "msg": f"Erro ao buscar destaques de @{target_username}: {_translate_any_error(e)}"})
+        # guarda os objetos Highlight pra /api/highlight-items abrir depois
+        # sem precisar buscar a lista inteira de novo
+        iloader_highlights[(target_username, id(cl))] = {str(h.unique_id): h for h in highlights}
+        return jsonify({"ok": True, "items": [_iloader_highlight_summary(h) for h in highlights],
+                        "target": target_username})
 
     try:
         uid = cl.user_id_from_username(target_username)
@@ -863,7 +890,22 @@ def api_highlight_items():
         return jsonify({"ok": False, "msg": _translate_any_error(e)})
 
     if engine == "instaloader":
-        return jsonify({"ok": False, "msg": "Destaques ainda nao sao suportados no motor Instaloader. Escolha uma conta Instagrapi pra isso."})
+        h = (iloader_highlights.get((target_username, id(cl))) or {}).get(highlight_id)
+        if h is None:
+            return jsonify({"ok": False, "msg": "Destaque expirou da memoria, abra a lista de destaques de novo."})
+        try:
+            items = list(h.get_items())
+        except Exception as e:
+            return jsonify({"ok": False, "msg": f"Erro ao abrir destaque: {_translate_any_error(e)}"})
+        display_title = title or h.title or "Destaque"
+        cache_key = f"highlight:{highlight_id}"
+        preview_cache[cache_key] = {
+            "cl": cl, "engine": "instaloader", "medias": items, "kind": "story",
+            "target": target_username, "label": f"@{target_username} › {display_title}",
+            "folder": f"{DOWNLOADS_DIR}/{target_username}/highlights/{_safe_name(display_title)}",
+        }
+        return jsonify({"ok": True, "items": [_iloader_story_item(s, is_downloaded) for s in items],
+                        "cache_key": cache_key})
 
     try:
         fetched_title, items = _fetch_highlight_items_raw(cl, highlight_id)
@@ -909,7 +951,8 @@ def _do_selected_download(cache, medias):
     tu = cache.get("target", "midia").lstrip("@") or "midia"
 
     if engine == "instaloader":
-        downloader = lambda cl, tu, m, folder: _iloader_download_post(m, tu, folder, add_download, _add_log)
+        iloader_fn = _iloader_download_post if kind == "post" else _iloader_download_story
+        downloader = lambda cl, tu, m, folder: iloader_fn(m, tu, folder, add_download, _add_log)
         account_label = getattr(cl.context, "username", "") or ""
     else:
         downloader = _download_one if kind == "post" else _download_story_item

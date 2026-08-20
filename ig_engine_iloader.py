@@ -11,10 +11,11 @@ As funcoes aqui devolvem os MESMOS formatos de dict que o app.py ja usa
 pros posts do instagrapi (_media_preview_item etc), pra reaproveitar toda
 a grade de selecao/preview do front-end sem mudar nada la.
 
-Limitacao atual: so posts (feed) sao suportados por esse motor. Stories e
-destaques continuam exclusivos do motor instagrapi.
+Suporta posts (feed), stories e destaques -- as mesmas coisas que o motor
+instagrapi baixa.
 """
 import os
+from datetime import datetime
 import requests
 import instaloader
 from instaloader.exceptions import (
@@ -163,6 +164,8 @@ def download_post(post, tu, folder, add_download_fn, log_fn):
                     saved.append(path)
                 except Exception:
                     pass
+            if saved:
+                save_caption_sidecar(folder, f"{tu}_{date_str}", post)
         else:
             url = post.video_url if post.is_video else post.url
             ext = "mp4" if post.is_video else "jpg"
@@ -176,6 +179,70 @@ def download_post(post, tu, folder, add_download_fn, log_fn):
             log_fn(f"Download: {fname}", "success")
             saved.append(path)
             save_caption_sidecar(folder, f"{tu}_{date_str}", post)
+    except Exception as e:
+        log_fn(f"Erro: {str(e)[:80]}", "error")
+    return saved
+
+
+# ─── STORIES E DESTAQUES ─────────────────────────────────────────────────────
+# Story/Highlight do Instaloader expoem StoryItem, que tem uma "forma"
+# diferente de Post (url/video_url/date_utc/mediaid, sem carrossel). As
+# funcoes abaixo convertem pros mesmos dicts que o app.py ja usa.
+
+def story_preview_item(item, is_downloaded_fn) -> dict:
+    return {
+        "id": str(item.mediaid),
+        "type": "video" if item.is_video else "photo",
+        "thumbnail": str(item.url) if item.url else None,
+        "date": item.date_utc.isoformat() if item.date_utc else None,
+        "already": is_downloaded_fn(str(item.mediaid)),
+    }
+
+
+def fetch_stories(L, username: str) -> list:
+    """Stories ativos (24h) de um perfil. Precisa estar logado."""
+    profile = instaloader.Profile.from_username(L.context, username)
+    items = []
+    for story in L.get_stories(userids=[profile.userid]):
+        items.extend(story.get_items())
+    return items
+
+
+def fetch_highlights(L, username: str) -> list:
+    """Lista os destaques do perfil (objetos Highlight, ainda sem baixar
+    os itens de dentro)."""
+    profile = instaloader.Profile.from_username(L.context, username)
+    return list(L.get_highlights(profile))
+
+
+def highlight_summary(h) -> dict:
+    """Mesmo formato usado pelos destaques do motor instagrapi, pro
+    front-end renderizar a lista sem saber qual motor gerou."""
+    return {
+        "id": str(h.unique_id),
+        "title": h.title or "Destaque",
+        "cover": str(h.cover_url) if h.cover_url else None,
+        "count": h.itemcount,
+    }
+
+
+def download_story_item(item, tu, folder, add_download_fn, log_fn):
+    """Baixa um item de story/destaque. Retorna lista de caminhos salvos."""
+    date_str = (item.date_utc or datetime.utcnow()).strftime("%Y%m%d_%H%M%S")
+    saved = []
+    try:
+        url = item.video_url if item.is_video else item.url
+        ext = "mp4" if item.is_video else "jpg"
+        fname = f"{tu}_story_{date_str}.{ext}"
+        path = os.path.join(folder, fname)
+        _http_download(url, path)
+        add_download_fn({
+            'media_id': str(item.mediaid), 'username': tu, 'file': fname,
+            'type': 'video' if item.is_video else 'photo',
+            'date': item.date_utc.isoformat() if item.date_utc else datetime.utcnow().isoformat(),
+        })
+        log_fn(f"Download: {fname}", "success")
+        saved.append(path)
     except Exception as e:
         log_fn(f"Erro: {str(e)[:80]}", "error")
     return saved
