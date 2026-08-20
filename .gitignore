@@ -10,3 +10,10 @@ targets.json
 config.json
 .env
 *.log
+
+# build desktop (Windows)
+.venv-build/
+build/
+dist/
+packaging/windows/output/
+*.spec.bak

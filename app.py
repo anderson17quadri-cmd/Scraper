@@ -4,20 +4,31 @@ IG-SCRAPER-PRO v4.0 - Web Dashboard
 python app.py  ->  http://localhost:5000
 """
 
-import os, json, time, threading, sqlite3, random, zipfile, re
+import os, sys, json, time, threading, sqlite3, random, zipfile, re
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from ig_auth import login_account, login_by_sessionid, translate_ig_error
 
-app = Flask(__name__)
+# Quando empacotado com PyInstaller (build desktop), os templates ficam
+# dentro do bundle (_MEIPASS) em vez de ao lado do app.py -- sem isso o
+# Flask nao encontra index.html e da TemplateNotFound no .exe.
+if getattr(sys, "frozen", False):
+    app = Flask(__name__, template_folder=os.path.join(sys._MEIPASS, "templates"))
+else:
+    app = Flask(__name__)
 
-DOWNLOADS_DIR = "downloads"
+# No build desktop, desktop.py define IGSCRAPER_DATA_DIR (pasta gravavel
+# do usuario, tipo %LOCALAPPDATA%) antes de importar este modulo. No
+# Termux/uso normal essa variavel nao existe e tudo continua relativo ao
+# diretorio atual, como sempre foi.
+_DATA_DIR = os.environ.get("IGSCRAPER_DATA_DIR") or "."
+DOWNLOADS_DIR = os.path.join(_DATA_DIR, "downloads")
 ZIPS_DIR = f"{DOWNLOADS_DIR}/_zips"
-SESSIONS_DIR = "sessions"
-DB_PATH = "scraper.db"
-ACCOUNTS_PATH = "accounts.json"
-TARGETS_PATH = "targets.json"
-CONFIG_PATH = "config.json"
+SESSIONS_DIR = os.path.join(_DATA_DIR, "sessions")
+DB_PATH = os.path.join(_DATA_DIR, "scraper.db")
+ACCOUNTS_PATH = os.path.join(_DATA_DIR, "accounts.json")
+TARGETS_PATH = os.path.join(_DATA_DIR, "targets.json")
+CONFIG_PATH = os.path.join(_DATA_DIR, "config.json")
 
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 os.makedirs(SESSIONS_DIR, exist_ok=True)
