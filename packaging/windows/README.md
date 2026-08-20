@@ -60,7 +60,21 @@ erro completa e me manda — eu adiciono o módulo que faltou em
 
 ## Atualizando o app depois
 
-Sempre que eu mandar código novo (`git pull`), repete o **Passo 1**
-(rodar `build_windows.bat` de novo) pra gerar um `.exe` atualizado. Se
-você já tem o instalador, repete o **Passo 2** também para gerar um
-novo instalador.
+Na raiz do projeto tem o **`ATUALIZAR.bat`** — dê 2 cliques nele e pronto.
+Ele faz tudo sozinho:
+
+1. Fecha o app, se estiver aberto (senão o Windows trava o arquivo e o
+   build falha)
+2. Baixa a versão mais nova do código (`git pull`)
+3. Reinstala as dependências e gera o `.exe` novo
+4. Se você instalou pelo instalador, atualiza também a cópia instalada —
+   assim o atalho da Área de Trabalho passa a abrir a versão nova (sem
+   isso, ele continuaria abrindo a antiga)
+5. Pergunta se você quer abrir o app já atualizado
+
+**Seus dados não são apagados na atualização.** Contas, sessões e
+downloads ficam em `%LOCALAPPDATA%\IGScraperPro`, separados do
+aplicativo.
+
+Se você quiser regerar também o *instalador* (pra reinstalar do zero ou
+passar pra outra máquina), repita o **Passo 2** depois de atualizar.
