@@ -167,6 +167,35 @@ def _get_client(acc_idx):
 def _safe_name(s):
     return re.sub(r'[^\w\-. ]', '_', str(s)).strip()[:60] or "destaque"
 
+def _save_caption_sidecar(folder, base_name, m):
+    """Salva a legenda + metadados do post num .txt do lado da midia
+    (mesma ideia do Instaloader: legenda legivel + dados uteis embaixo).
+    So faz sentido pra posts (Media) -- stories nao tem legenda."""
+    caption = (getattr(m, "caption_text", None) or "").strip()
+    likes = getattr(m, "like_count", None)
+    comments = getattr(m, "comment_count", None)
+    location = getattr(m, "location", None)
+    tags = [f"@{u.user.username}" for u in (getattr(m, "usertags", None) or []) if getattr(u, "user", None)]
+
+    lines = [caption] if caption else []
+    lines.append("")
+    lines.append("---")
+    lines.append(f"Data: {m.taken_at.strftime('%Y-%m-%d %H:%M')}")
+    if likes is not None:
+        lines.append(f"Curtidas: {likes}")
+    if comments is not None:
+        lines.append(f"Comentarios: {comments}")
+    if location is not None and getattr(location, "name", None):
+        lines.append(f"Localizacao: {location.name}")
+    if tags:
+        lines.append(f"Marcados: {', '.join(tags)}")
+
+    try:
+        with open(os.path.join(folder, f"{base_name}.txt"), "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+    except Exception:
+        pass
+
 def _highlight_cover_url(cover):
     """cover_media do Highlight vem como dict cru da API do Instagram, nao
     como objeto Media -- tenta achar a url da imagem em algumas chaves
@@ -281,11 +310,13 @@ def _download_one(cl, tu, m, folder):
             add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': 'photo', 'date': m.taken_at.isoformat()})
             _add_log(f"Download: {os.path.basename(path)}", "success")
             saved_paths.append(str(path))
+            _save_caption_sidecar(folder, f"{tu}_{date_str}", m)
         elif m.media_type == 2:
             path = cl.video_download_by_url(m.video_url, filename=f"{tu}_{date_str}", folder=folder)
             add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': 'video', 'date': m.taken_at.isoformat()})
             _add_log(f"Download: {os.path.basename(path)}", "success")
             saved_paths.append(str(path))
+            _save_caption_sidecar(folder, f"{tu}_{date_str}", m)
         elif m.media_type == 8:  # carousel
             for j, res in enumerate(m.resources):
                 try:
@@ -300,6 +331,8 @@ def _download_one(cl, tu, m, folder):
                     saved_paths.append(str(path))
                 except Exception:
                     pass
+            # legenda e uma so pro carrossel inteiro, nao por item
+            _save_caption_sidecar(folder, f"{tu}_{date_str}", m)
     except Exception as e:
         es = str(e)
         _add_log(f"Erro: {es[:80]}", "error")
