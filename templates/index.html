@@ -83,8 +83,13 @@ header {
   color:var(--muted); font-size:0.64rem; font-weight:600; cursor:pointer;
   transition:color var(--transition); font-family:inherit;
 }
-.nav-btn .nav-icon { font-size:1.3rem; line-height:1; }
+.nav-btn .nav-icon {
+  font-size:1.15rem; line-height:1; width:38px; height:24px; display:flex;
+  align-items:center; justify-content:center; border-radius:12px;
+  transition:background-color var(--transition);
+}
 .nav-btn.active { color:var(--cyan); }
+.nav-btn.active .nav-icon { background:var(--cyan-bg); }
 
 /* ─── CARDS ─────────────────────────────────────────────── */
 .card {
@@ -226,6 +231,10 @@ header {
   display:grid; grid-template-columns:repeat(auto-fill, minmax(84px, 1fr)); gap:8px;
   max-height:440px; overflow-y:auto;
 }
+.welcome-hint { grid-column:1/-1; text-align:center; padding:44px 16px 30px; }
+.welcome-hint .welcome-icon { font-size:2.6rem; margin-bottom:12px; opacity:.7; }
+.welcome-hint h3 { color:var(--text); font-size:1rem; font-weight:700; margin-bottom:8px; }
+.welcome-hint p { font-size:0.82rem; line-height:1.6; color:var(--dim); max-width:320px; margin:0 auto; }
 .preview-item {
   position:relative; aspect-ratio:1; border-radius:8px; overflow:hidden;
   border:2px solid transparent; cursor:pointer; background:var(--bg2);
@@ -425,7 +434,13 @@ header {
         <button class="btn btn-ghost btn-xs" onclick="selectAllPreview(false)">Limpar</button>
         <button class="btn btn-success btn-xs" onclick="downloadSelected()" id="btn-download-selected" style="margin-left:auto;">Baixar selecionados (0)</button>
       </div>
-      <div id="preview-grid" class="preview-grid"></div>
+      <div id="preview-grid" class="preview-grid">
+        <div class="welcome-hint">
+          <div class="welcome-icon">🔍</div>
+          <h3>Busque um perfil pra começar</h3>
+          <p>Digite o usuário do Instagram acima e toque em Buscar. Você escolhe exatamente quais fotos, vídeos, stories ou destaques baixar.</p>
+        </div>
+      </div>
       <div id="preview-load-status" class="card-sub" style="text-align:center;margin-top:10px;" hidden></div>
     </div>
 
