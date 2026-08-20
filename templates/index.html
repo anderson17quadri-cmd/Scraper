@@ -456,11 +456,21 @@ header {
         <span class="card-title">Contas</span>
         <button class="btn btn-ghost btn-xs" onclick="showLogin()">+ Login</button>
       </div>
-      <div class="input-row" style="margin-bottom:10px;">
+      <div class="input-row" style="margin-bottom:8px;">
         <input class="input" id="new-acc-user" placeholder="Usuario...">
         <input class="input" type="password" id="new-acc-pass" placeholder="Senha...">
         <button class="btn btn-primary" onclick="addAccount()">Add</button>
       </div>
+      <div class="input-row" style="margin-bottom:10px;">
+        <select class="input" id="new-acc-engine">
+          <option value="instagrapi">🔵 Instagrapi (padrao -- posts, stories, destaques)</option>
+          <option value="instaloader">🟠 Instaloader (alternativo -- so posts, reserva)</option>
+        </select>
+      </div>
+      <p class="card-sub" style="margin-bottom:10px;">
+        Motor Instaloader e um backup: usa outro caminho de acesso ao Instagram, util se a
+        conta do Instagrapi levar bloqueio. So baixa posts (sem stories/destaques por enquanto).
+      </p>
       <div class="scroll-list" id="accounts-list"></div>
     </div>
 
@@ -687,8 +697,9 @@ async function doLogout() {
 async function addAccount() {
   const u = $('new-acc-user').value.trim();
   const p = $('new-acc-pass').value.trim();
+  const engine = $('new-acc-engine').value;
   if (!u||!p) return toast('Preencha os campos', 'err');
-  await api('/api/accounts', {method:'POST', body:JSON.stringify({username:u, password:p})});
+  await api('/api/accounts', {method:'POST', body:JSON.stringify({username:u, password:p, engine})});
   $('new-acc-user').value = '';
   $('new-acc-pass').value = '';
   toast('Conta adicionada');
@@ -1083,8 +1094,9 @@ async function refreshAll() {
     const active = a.active !== false;
     const dot = active ? '🟢' : '⚫';
     const method = a.sessionid ? '🍪 sessao' : '🔑 senha';
+    const engine = a.engine === 'instaloader' ? '🟠 Instaloader' : '🔵 Instagrapi';
     ahtml += `<div class="list-item" style="opacity:${active?1:0.5}">
-      <div class="info"><div class="name">${dot} @${a.username}</div><div class="meta">${method} &middot; ${a.last_use||'Nunca'}</div></div>
+      <div class="info"><div class="name">${dot} @${a.username}</div><div class="meta">${engine} &middot; ${method} &middot; ${a.last_use||'Nunca'}</div></div>
       <div class="actions">
         <button class="btn btn-ghost btn-xs" onclick="toggleAccount(${i})">${active?'Off':'On'}</button>
         <button class="btn btn-danger btn-xs" onclick="delAccount(${i})">X</button>

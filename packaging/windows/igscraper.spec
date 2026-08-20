@@ -24,6 +24,8 @@ a = Analysis(
         'PIL',
         'PIL._imaging',
         'engineio.async_drivers.threading',
+        'instaloader',
+        'instaloader.exceptions',
     ],
     hookspath=[],
     hooksconfig={},

@@ -4,10 +4,14 @@ IG-SCRAPER-PRO v4.0 - Web Dashboard
 python app.py  ->  http://localhost:5000
 """
 
-import os, sys, json, time, threading, sqlite3, random, zipfile, re
+import os, sys, json, time, threading, sqlite3, random, zipfile, re, itertools
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from ig_auth import login_account, login_by_sessionid, translate_ig_error
+from ig_engine_iloader import (login_iloader_account, translate_iloader_error,
+                               post_preview_item as _iloader_preview_item,
+                               download_post as _iloader_download_post)
+import instaloader
 
 # Quando empacotado com PyInstaller (build desktop), os templates ficam
 # dentro do bundle (_MEIPASS) em vez de ao lado do app.py -- sem isso o
@@ -113,7 +117,7 @@ def get_cfg():
     return jload(CONFIG_PATH, {"delay_min": 3, "delay_max": 10, "posts_per_profile": 15,
                                 "auto_interval": 3600, "max_downloads_per_day": 500})
 
-def upsert_account(username, password=None, sessionid=None):
+def upsert_account(username, password=None, sessionid=None, engine=None):
     accs = jload(ACCOUNTS_PATH)
     accounts = accs.setdefault("accounts", [])
     acc = next((a for a in accounts if a["username"] == username), None)
@@ -126,6 +130,8 @@ def upsert_account(username, password=None, sessionid=None):
     if sessionid:
         acc["sessionid"] = sessionid
         acc.pop("password", None)
+    if engine in ("instagrapi", "instaloader"):
+        acc["engine"] = engine
     acc["active"] = True
     acc["last_use"] = datetime.now().isoformat()
     jsave(ACCOUNTS_PATH, accs)
@@ -142,11 +148,13 @@ scrape_state = {"running": False, "connected": False, "current_account": "",
 preview_cache = {}
 PREVIEW_PAGE_SIZE = 30
 
-# conta-nossa (username) -> Client ja autenticado, reaproveitado entre
-# chamadas de preview/stories/destaques pra nao relogar toda hora
+# (conta-nossa, motor) -> Client/Instaloader ja autenticado, reaproveitado
+# entre chamadas de preview/stories/destaques pra nao relogar toda hora
 active_clients = {}
 
 def _get_client(acc_idx):
+    """Retorna (engine, client) da conta escolhida (ou a primeira ativa se
+    nenhum indice for passado). engine e 'instagrapi' ou 'instaloader'."""
     accounts = jload(ACCOUNTS_PATH).get("accounts", [])
     if not accounts:
         raise ValueError("Nenhuma conta cadastrada")
@@ -158,11 +166,24 @@ def _get_client(acc_idx):
         raise ValueError("Nenhuma conta valida")
     acc = accounts[acc_idx]
     un = acc["username"]
-    cl = active_clients.get(un)
+    engine = acc.get("engine", "instagrapi")
+    key = (un, engine)
+    cl = active_clients.get(key)
     if cl is None:
-        cl = login_account(acc, f"{SESSIONS_DIR}/{un}.json")
-        active_clients[un] = cl
-    return cl
+        if engine == "instaloader":
+            cl = login_iloader_account(acc, f"{SESSIONS_DIR}/{un}.iloader")
+        else:
+            cl = login_account(acc, f"{SESSIONS_DIR}/{un}.json")
+        active_clients[key] = cl
+    return engine, cl
+
+def _translate_any_error(e):
+    """translate_ig_error() so conhece excecoes do instagrapi -- se for
+    uma excecao do Instaloader, usa o tradutor dele em vez disso."""
+    import instaloader.exceptions as _iloader_exc
+    if isinstance(e, _iloader_exc.InstaloaderException):
+        return translate_iloader_error(e)
+    return translate_ig_error(e)
 
 def _safe_name(s):
     return re.sub(r'[^\w\-. ]', '_', str(s)).strip()[:60] or "destaque"
@@ -365,10 +386,19 @@ def _download_story_item(cl, tu, s, folder):
     return saved_paths
 
 def _human_delay_after(m):
-    if m.media_type == 2 and hasattr(m, 'video_duration') and m.video_duration:
+    is_video = getattr(m, 'media_type', None) == 2 or getattr(m, 'is_video', False)
+    if is_video and getattr(m, 'video_duration', None):
         time.sleep(min(m.video_duration + 3, 60))
     else:
         time.sleep(3 + random.random() * 7)
+
+def _item_id(m):
+    """Id unico de uma midia, seja ela um objeto do instagrapi (.id) ou
+    um Post do Instaloader (.mediaid)."""
+    v = getattr(m, 'id', None)
+    if v is None:
+        v = getattr(m, 'mediaid', None)
+    return str(v)
 
 def _do_scrape(account_index=None, target_index=None):
     global scrape_state
@@ -439,17 +469,20 @@ def _do_scrape(account_index=None, target_index=None):
                 continue
 
             un = acc['username']
+            engine = acc.get('engine', 'instagrapi')
             scrape_state["current_account"] = un
-            scrape_state["message"] = f"Conectando @{un}..."
-            _add_log(f"Tentando login em @{un}...")
+            scrape_state["message"] = f"Conectando @{un} ({engine})..."
+            _add_log(f"Tentando login em @{un} ({engine})...")
 
             try:
-                sf = f"{SESSIONS_DIR}/{un}.json"
-                cl = login_account(acc, sf)
+                if engine == 'instaloader':
+                    cl = login_iloader_account(acc, f"{SESSIONS_DIR}/{un}.iloader")
+                else:
+                    cl = login_account(acc, f"{SESSIONS_DIR}/{un}.json")
                 scrape_state["connected"] = True
                 _add_log(f"Login OK @{un}")
             except Exception as e:
-                msg = translate_ig_error(e)
+                msg = _translate_any_error(e)
                 _add_log(f"Falha login @{un}: {msg}", "error")
                 scrape_state["message"] = f"Falha login @{un}: {msg}"
                 continue
@@ -461,38 +494,57 @@ def _do_scrape(account_index=None, target_index=None):
                 scrape_state["message"] = f"Buscando @{tu}..."
                 scrape_state["current"] = f"@{tu}"
                 _add_log(f"Iniciando @{tu}...")
-
-                try:
-                    uid = cl.user_id_from_username(tu)
-                except:
-                    _add_log(f"@{tu} nao encontrado", "error")
-                    continue
-
-                try:
-                    medias = cl.user_medias(uid, amount=cfg.get("posts_per_profile", 15))
-                except Exception as e:
-                    _add_log(f"Erro buscar @{tu}: {e}", "error")
-                    continue
-
-                scrape_state["total"] = len(medias)
-                _add_log(f"@{tu}: {len(medias)} midias encontradas")
-
                 folder = f"{DOWNLOADS_DIR}/{tu}"
                 os.makedirs(folder, exist_ok=True)
                 downloaded_count = 0
 
-                for i, m in enumerate(medias):
-                    if _stopped():
-                        break
-                    scrape_state["progress"] = i + 1
-
-                    if is_downloaded(m.id):
+                if engine == 'instaloader':
+                    try:
+                        profile = instaloader.Profile.from_username(cl.context, tu)
+                        medias = list(itertools.islice(profile.get_posts(), cfg.get("posts_per_profile", 15)))
+                    except Exception as e:
+                        _add_log(f"Erro buscar @{tu}: {_translate_any_error(e)}", "error")
                         continue
 
-                    saved = _download_one(cl, tu, m, folder)
-                    downloaded_count += len(saved)
-                    if saved:
-                        _human_delay_after(m)
+                    scrape_state["total"] = len(medias)
+                    _add_log(f"@{tu}: {len(medias)} midias encontradas")
+
+                    for i, m in enumerate(medias):
+                        if _stopped():
+                            break
+                        scrape_state["progress"] = i + 1
+                        if is_downloaded(_item_id(m)):
+                            continue
+                        saved = _iloader_download_post(m, tu, folder, add_download, _add_log)
+                        downloaded_count += len(saved)
+                        if saved:
+                            _human_delay_after(m)
+                else:
+                    try:
+                        uid = cl.user_id_from_username(tu)
+                    except:
+                        _add_log(f"@{tu} nao encontrado", "error")
+                        continue
+
+                    try:
+                        medias = cl.user_medias(uid, amount=cfg.get("posts_per_profile", 15))
+                    except Exception as e:
+                        _add_log(f"Erro buscar @{tu}: {e}", "error")
+                        continue
+
+                    scrape_state["total"] = len(medias)
+                    _add_log(f"@{tu}: {len(medias)} midias encontradas")
+
+                    for i, m in enumerate(medias):
+                        if _stopped():
+                            break
+                        scrape_state["progress"] = i + 1
+                        if is_downloaded(m.id):
+                            continue
+                        saved = _download_one(cl, tu, m, folder)
+                        downloaded_count += len(saved)
+                        if saved:
+                            _human_delay_after(m)
 
                 _add_log(f"@{tu}: {downloaded_count} baixados", "success")
                 if _stopped():
@@ -573,8 +625,9 @@ def api_accounts():
     data = request.get_json()
     if request.method == "POST":
         accs = jload(ACCOUNTS_PATH)
+        engine = data.get("engine") if data.get("engine") in ("instagrapi", "instaloader") else "instagrapi"
         accs.setdefault("accounts", []).append({
-            "username": data["username"], "password": data["password"],
+            "username": data["username"], "password": data["password"], "engine": engine,
             "active": True, "created_at": datetime.now().isoformat(), "last_use": None
         })
         jsave(ACCOUNTS_PATH, accs)
@@ -649,19 +702,40 @@ def api_preview():
         return jsonify({"ok": False, "msg": "Informe o perfil alvo"})
 
     try:
-        cl = _get_client(data.get("account_index"))
+        engine, cl = _get_client(data.get("account_index"))
     except Exception as e:
-        return jsonify({"ok": False, "msg": translate_ig_error(e)})
+        return jsonify({"ok": False, "msg": _translate_any_error(e)})
+
+    cache_key = target_username
+
+    if engine == "instaloader":
+        try:
+            profile = instaloader.Profile.from_username(cl.context, target_username)
+            posts_iter = profile.get_posts()
+            batch = list(itertools.islice(posts_iter, PREVIEW_PAGE_SIZE))
+        except Exception as e:
+            return jsonify({"ok": False, "msg": f"Erro ao buscar @{target_username}: {_translate_any_error(e)}"})
+
+        preview_cache[cache_key] = {
+            "cl": cl, "engine": "instaloader", "posts_iter": posts_iter, "medias": batch,
+            "kind": "post", "target": target_username, "label": f"@{target_username}",
+            "folder": f"{DOWNLOADS_DIR}/{target_username}",
+        }
+        return jsonify({
+            "ok": True,
+            "items": [_iloader_preview_item(p, is_downloaded) for p in batch],
+            "cache_key": cache_key,
+            "has_more": len(batch) == PREVIEW_PAGE_SIZE,
+        })
 
     try:
         uid = cl.user_id_from_username(target_username)
         medias, end_cursor = cl.user_medias_paginated(uid, amount=PREVIEW_PAGE_SIZE)
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"Erro ao buscar @{target_username}: {translate_ig_error(e)}"})
+        return jsonify({"ok": False, "msg": f"Erro ao buscar @{target_username}: {_translate_any_error(e)}"})
 
-    cache_key = target_username
     preview_cache[cache_key] = {
-        "cl": cl, "uid": uid, "medias": list(medias), "end_cursor": end_cursor,
+        "cl": cl, "engine": "instagrapi", "uid": uid, "medias": list(medias), "end_cursor": end_cursor,
         "kind": "post", "target": target_username, "label": f"@{target_username}",
         "folder": f"{DOWNLOADS_DIR}/{target_username}",
     }
@@ -680,6 +754,22 @@ def api_preview_more():
     cache = preview_cache.get(cache_key)
     if not cache:
         return jsonify({"ok": False, "msg": "Preview expirado, busque de novo."})
+
+    if cache.get("engine") == "instaloader":
+        it = cache.get("posts_iter")
+        if it is None:
+            return jsonify({"ok": True, "items": [], "has_more": False})
+        try:
+            batch = list(itertools.islice(it, PREVIEW_PAGE_SIZE))
+        except Exception as e:
+            return jsonify({"ok": False, "msg": f"Erro ao buscar mais midias: {_translate_any_error(e)}"})
+        cache["medias"].extend(batch)
+        return jsonify({
+            "ok": True,
+            "items": [_iloader_preview_item(p, is_downloaded) for p in batch],
+            "has_more": len(batch) == PREVIEW_PAGE_SIZE,
+        })
+
     if not cache.get("end_cursor"):
         return jsonify({"ok": True, "items": [], "has_more": False})
 
@@ -687,7 +777,7 @@ def api_preview_more():
         medias, end_cursor = cache["cl"].user_medias_paginated(
             cache["uid"], amount=PREVIEW_PAGE_SIZE, end_cursor=cache["end_cursor"])
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"Erro ao buscar mais midias: {translate_ig_error(e)}"})
+        return jsonify({"ok": False, "msg": f"Erro ao buscar mais midias: {_translate_any_error(e)}"})
 
     cache["medias"].extend(medias)
     cache["end_cursor"] = end_cursor
@@ -706,19 +796,22 @@ def api_stories():
         return jsonify({"ok": False, "msg": "Informe o perfil alvo"})
 
     try:
-        cl = _get_client(data.get("account_index"))
+        engine, cl = _get_client(data.get("account_index"))
     except Exception as e:
-        return jsonify({"ok": False, "msg": translate_ig_error(e)})
+        return jsonify({"ok": False, "msg": _translate_any_error(e)})
+
+    if engine == "instaloader":
+        return jsonify({"ok": False, "msg": "Stories ainda nao sao suportados no motor Instaloader. Escolha uma conta Instagrapi pra isso."})
 
     try:
         uid = cl.user_id_from_username(target_username)
         stories = cl.user_stories(uid)
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"Erro ao buscar stories de @{target_username}: {translate_ig_error(e)}"})
+        return jsonify({"ok": False, "msg": f"Erro ao buscar stories de @{target_username}: {_translate_any_error(e)}"})
 
     cache_key = f"{target_username}:stories"
     preview_cache[cache_key] = {
-        "cl": cl, "medias": list(stories), "kind": "story",
+        "cl": cl, "engine": "instagrapi", "medias": list(stories), "kind": "story",
         "target": target_username, "label": f"@{target_username} (stories)",
         "folder": f"{DOWNLOADS_DIR}/{target_username}/stories",
     }
@@ -734,15 +827,18 @@ def api_highlights():
         return jsonify({"ok": False, "msg": "Informe o perfil alvo"})
 
     try:
-        cl = _get_client(data.get("account_index"))
+        engine, cl = _get_client(data.get("account_index"))
     except Exception as e:
-        return jsonify({"ok": False, "msg": translate_ig_error(e)})
+        return jsonify({"ok": False, "msg": _translate_any_error(e)})
+
+    if engine == "instaloader":
+        return jsonify({"ok": False, "msg": "Destaques ainda nao sao suportados no motor Instaloader. Escolha uma conta Instagrapi pra isso."})
 
     try:
         uid = cl.user_id_from_username(target_username)
         highlights = cl.user_highlights(uid)
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"Erro ao buscar destaques de @{target_username}: {translate_ig_error(e)}"})
+        return jsonify({"ok": False, "msg": f"Erro ao buscar destaques de @{target_username}: {_translate_any_error(e)}"})
 
     items = [{
         "id": str(h.pk),
@@ -762,19 +858,22 @@ def api_highlight_items():
         return jsonify({"ok": False, "msg": "Dados invalidos"})
 
     try:
-        cl = _get_client(data.get("account_index"))
+        engine, cl = _get_client(data.get("account_index"))
     except Exception as e:
-        return jsonify({"ok": False, "msg": translate_ig_error(e)})
+        return jsonify({"ok": False, "msg": _translate_any_error(e)})
+
+    if engine == "instaloader":
+        return jsonify({"ok": False, "msg": "Destaques ainda nao sao suportados no motor Instaloader. Escolha uma conta Instagrapi pra isso."})
 
     try:
         fetched_title, items = _fetch_highlight_items_raw(cl, highlight_id)
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"Erro ao abrir destaque: {translate_ig_error(e)}"})
+        return jsonify({"ok": False, "msg": f"Erro ao abrir destaque: {_translate_any_error(e)}"})
 
     display_title = title or fetched_title
     cache_key = f"highlight:{highlight_id}"
     preview_cache[cache_key] = {
-        "cl": cl, "medias": items, "kind": "story",
+        "cl": cl, "engine": "instagrapi", "medias": items, "kind": "story",
         "target": target_username, "label": f"@{target_username} › {display_title}",
         "folder": f"{DOWNLOADS_DIR}/{target_username}/highlights/{_safe_name(display_title)}",
     }
@@ -793,7 +892,7 @@ def api_download_selected():
     if not cache or not ids:
         return jsonify({"ok": False, "msg": "Nada selecionado ou preview expirado. Busque de novo."})
 
-    selected = [m for m in cache["medias"] if str(m.id) in ids]
+    selected = [m for m in cache["medias"] if _item_id(m) in ids]
     if not selected:
         return jsonify({"ok": False, "msg": "Selecao invalida, busque de novo."})
 
@@ -805,11 +904,18 @@ def _do_selected_download(cache, medias):
     cl = cache["cl"]
     folder = cache["folder"]
     kind = cache.get("kind", "post")
+    engine = cache.get("engine", "instagrapi")
     label = cache.get("label", "selecionados")
     tu = cache.get("target", "midia").lstrip("@") or "midia"
-    downloader = _download_one if kind == "post" else _download_story_item
 
-    scrape_state.update(running=True, connected=True, current_account=getattr(cl, "username", "") or "",
+    if engine == "instaloader":
+        downloader = lambda cl, tu, m, folder: _iloader_download_post(m, tu, folder, add_download, _add_log)
+        account_label = getattr(cl.context, "username", "") or ""
+    else:
+        downloader = _download_one if kind == "post" else _download_story_item
+        account_label = getattr(cl, "username", "") or ""
+
+    scrape_state.update(running=True, connected=True, current_account=account_label,
                         message=f"Baixando selecionados de {label}...", progress=0,
                         total=len(medias), current=label, logs=[], stop_requested=False,
                         zip_url=None)
@@ -820,7 +926,7 @@ def _do_selected_download(cache, medias):
             if _stopped():
                 break
             scrape_state["progress"] = i + 1
-            if is_downloaded(m.id):
+            if is_downloaded(_item_id(m)):
                 continue
             saved = downloader(cl, tu, m, folder)
             all_saved.extend(saved)
