@@ -5,6 +5,7 @@ python app.py  ->  http://localhost:5000
 """
 
 import os, sys, json, time, threading, sqlite3, random, zipfile, re, itertools
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from ig_auth import login_account, login_by_sessionid, translate_ig_error
@@ -146,7 +147,12 @@ def upsert_account(username, password=None, sessionid=None, engine=None):
 # ─── SCRAPING ENGINE ──────────────────────────────────────────────────────────
 scrape_state = {"running": False, "connected": False, "current_account": "",
                 "message": "Pronto", "progress": 0, "total": 0, "current": "", "logs": [],
-                "stop_requested": False, "zip_url": None, "speed": "", "speed_avg": ""}
+                "stop_requested": False, "zip_url": None, "speed": "", "speed_avg": "",
+                "failed_count": 0}
+
+# midias que falharam na ultima leva de downloads, agrupadas por
+# conta/alvo/pasta, pra dar pra tentar de novo so essas (ver /api/retry-failed)
+last_failed_groups = []
 
 # cache em memoria: cache_key -> {"cl":.., "medias":[...], "kind": "post"|"story",
 # "target":.., "label":.., "folder":.., "uid":.. , "end_cursor":..}
@@ -423,6 +429,75 @@ def daily_limit_reached():
         return True
     return False
 
+PARALLEL_WORKERS = 3
+
+def _run_downloads(medias, downloader, cl, tu, folder, get_id, progress_offset=0):
+    """Baixa uma lista de midias (posts/stories) pra uma conta+alvo.
+
+    No preset de velocidade "Maxima" (pausa configurada em 0-1s) baixa
+    varias midias ao mesmo tempo em vez de uma por uma -- usa bem mais
+    da velocidade da internet, mas parece mais "robo" pro Instagram, daí
+    so entra nesse modo mais arriscado (quem quiser cautela usa Segura
+    ou Rapida, que continuam sequenciais com pausa entre downloads).
+
+    Midias que nao estavam baixadas mas o download falhou (excecao ou
+    lista vazia devolvida) entram em 'failed', pra dar pra tentar de novo
+    so essas depois (botao "Tentar novamente" no painel de Progresso).
+
+    Retorna (caminhos_salvos, quantidade_baixada, midias_com_erro)."""
+    cfg = get_cfg()
+    parallel = cfg.get("delay_min", 3) == 0 and cfg.get("delay_max", 10) <= 1
+    all_saved = []
+    downloaded_count = 0
+    failed = []
+
+    if parallel:
+        pendentes = [m for m in medias if not is_downloaded(get_id(m))]
+        scrape_state["progress"] = progress_offset + (len(medias) - len(pendentes))
+        lock = threading.Lock()
+        with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
+            futures = {ex.submit(downloader, cl, tu, m, folder): m for m in pendentes}
+            for fut in as_completed(futures):
+                m = futures[fut]
+                try:
+                    saved = fut.result()
+                except Exception:
+                    saved = []
+                with lock:
+                    scrape_state["progress"] += 1
+                    all_saved.extend(saved)
+                    downloaded_count += len(saved)
+                    if not saved:
+                        failed.append(m)
+                if _stopped() or daily_limit_reached():
+                    for f in futures:
+                        f.cancel()
+                    break
+    else:
+        for i, m in enumerate(medias):
+            if _stopped() or daily_limit_reached():
+                break
+            scrape_state["progress"] = progress_offset + i + 1
+            if is_downloaded(get_id(m)):
+                continue
+            saved = downloader(cl, tu, m, folder)
+            all_saved.extend(saved)
+            downloaded_count += len(saved)
+            if saved:
+                _human_delay_after(m)
+            else:
+                failed.append(m)
+
+    return all_saved, downloaded_count, failed
+
+def _register_failed(cl, tu, folder, downloader, failed, get_id):
+    if failed:
+        last_failed_groups.append({
+            "cl": cl, "tu": tu, "folder": folder, "downloader": downloader,
+            "medias": failed, "get_id": get_id,
+        })
+        scrape_state["failed_count"] = scrape_state.get("failed_count", 0) + len(failed)
+
 def _item_id(m):
     """Id unico de uma midia, seja ela um objeto do instagrapi (.id) ou
     um Post do Instaloader (.mediaid)."""
@@ -431,13 +506,72 @@ def _item_id(m):
         v = getattr(m, 'mediaid', None)
     return str(v)
 
+def _media_date(m):
+    """Data de publicacao de uma midia, seja ela um objeto do instagrapi
+    (.taken_at) ou um Post/StoryItem do Instaloader (.date_utc). Sempre
+    devolve datetime "naive" (sem timezone) pra poder comparar os dois
+    engines com a mesma logica."""
+    dt = getattr(m, 'taken_at', None) or getattr(m, 'date_utc', None)
+    if dt and dt.tzinfo:
+        dt = dt.replace(tzinfo=None)
+    return dt
+
+def _parse_date_param(s):
+    """Converte "YYYY-MM-DD" (vindo do <input type=date> do front) num
+    datetime. None se vazio/invalido."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+def _in_date_range(dt, date_from, date_to):
+    if dt is None:
+        return True
+    if date_from and dt < date_from:
+        return False
+    if date_to and dt > date_to.replace(hour=23, minute=59, second=59):
+        return False
+    return True
+
+def _fetch_filtered_page(fetch_batch, date_from, date_to, page_size, max_batches=6):
+    """Busca paginas de midias ate juntar 'page_size' itens dentro do
+    intervalo de data pedido (ou esgotar o perfil / tentar demais).
+
+    fetch_batch() deve devolver uma lista de ate page_size midias por
+    chamada (lista vazia = acabou). Como o feed do Instagram vem sempre
+    do mais novo pro mais velho, assim que aparece uma midia mais velha
+    que 'date_from' da pra parar de vez -- o resto so vai ficar mais
+    velho ainda. Devolve (midias_filtradas, tem_mais)."""
+    collected = []
+    has_more = True
+    for _ in range(max_batches):
+        if len(collected) >= page_size or not has_more:
+            break
+        raw = fetch_batch()
+        has_more = len(raw) == page_size
+        for m in raw:
+            dt = _media_date(m)
+            if date_from and dt and dt < date_from:
+                has_more = False
+                break
+            if _in_date_range(dt, date_from, date_to):
+                collected.append(m)
+    # nao trunca em page_size: um lote cheio processado por inteiro pode
+    # render um pouco mais que page_size itens validos, e cortar aqui
+    # descartaria midias de verdade (o cursor/iterator ja passou por elas,
+    # entao "Carregar mais" nunca as veria de novo)
+    return collected, has_more
+
 def _do_scrape(account_index=None, target_index=None):
     global scrape_state
     _speed_stats["bytes"] = 0
     _speed_stats["seconds"] = 0.0
+    last_failed_groups.clear()
     scrape_state.update(running=True, connected=False, current_account="",
                         message="Ligando motor...", progress=0, total=0, current="", logs=[],
-                        stop_requested=False, zip_url=None, speed="", speed_avg="")
+                        stop_requested=False, zip_url=None, speed="", speed_avg="", failed_count=0)
 
     try:
         cfg = get_cfg()
@@ -542,16 +676,10 @@ def _do_scrape(account_index=None, target_index=None):
                     scrape_state["total"] = len(medias)
                     _add_log(f"@{tu}: {len(medias)} midias encontradas")
 
-                    for i, m in enumerate(medias):
-                        if _stopped() or daily_limit_reached():
-                            break
-                        scrape_state["progress"] = i + 1
-                        if is_downloaded(_item_id(m)):
-                            continue
-                        saved = _iloader_download_post(m, tu, folder, add_download, _add_log, _record_speed)
-                        downloaded_count += len(saved)
-                        if saved:
-                            _human_delay_after(m)
+                    iloader_downloader = lambda cl, tu, m, folder: _iloader_download_post(
+                        m, tu, folder, add_download, _add_log, _record_speed)
+                    _saved, downloaded_count, failed = _run_downloads(medias, iloader_downloader, cl, tu, folder, _item_id)
+                    _register_failed(cl, tu, folder, iloader_downloader, failed, _item_id)
                 else:
                     try:
                         uid = cl.user_id_from_username(tu)
@@ -568,16 +696,8 @@ def _do_scrape(account_index=None, target_index=None):
                     scrape_state["total"] = len(medias)
                     _add_log(f"@{tu}: {len(medias)} midias encontradas")
 
-                    for i, m in enumerate(medias):
-                        if _stopped() or daily_limit_reached():
-                            break
-                        scrape_state["progress"] = i + 1
-                        if is_downloaded(m.id):
-                            continue
-                        saved = _download_one(cl, tu, m, folder)
-                        downloaded_count += len(saved)
-                        if saved:
-                            _human_delay_after(m)
+                    _saved, downloaded_count, failed = _run_downloads(medias, _download_one, cl, tu, folder, _item_id)
+                    _register_failed(cl, tu, folder, _download_one, failed, _item_id)
 
                 _add_log(f"@{tu}: {downloaded_count} baixados", "success")
                 if _stopped():
@@ -787,6 +907,8 @@ def api_preview():
     target_username = (data.get("target_username") or "").strip().lstrip("@")
     if not target_username:
         return jsonify({"ok": False, "msg": "Informe o perfil alvo"})
+    date_from = _parse_date_param(data.get("date_from"))
+    date_to = _parse_date_param(data.get("date_to"))
 
     try:
         engine, cl = _get_client(data.get("account_index"))
@@ -799,7 +921,13 @@ def api_preview():
         try:
             profile = instaloader.Profile.from_username(cl.context, target_username)
             posts_iter = profile.get_posts()
-            batch = list(itertools.islice(posts_iter, PREVIEW_PAGE_SIZE))
+            if date_from or date_to:
+                batch, has_more = _fetch_filtered_page(
+                    lambda: list(itertools.islice(posts_iter, PREVIEW_PAGE_SIZE)),
+                    date_from, date_to, PREVIEW_PAGE_SIZE)
+            else:
+                batch = list(itertools.islice(posts_iter, PREVIEW_PAGE_SIZE))
+                has_more = len(batch) == PREVIEW_PAGE_SIZE
         except Exception as e:
             return jsonify({"ok": False, "msg": f"Erro ao buscar @{target_username}: {_translate_any_error(e)}"})
 
@@ -807,31 +935,42 @@ def api_preview():
             "cl": cl, "engine": "instaloader", "posts_iter": posts_iter, "medias": batch,
             "kind": "post", "target": target_username, "label": f"@{target_username}",
             "folder": f"{DOWNLOADS_DIR}/{target_username}",
+            "date_from": date_from, "date_to": date_to,
         }
         return jsonify({
             "ok": True,
             "items": [_iloader_preview_item(p, is_downloaded) for p in batch],
             "cache_key": cache_key,
-            "has_more": len(batch) == PREVIEW_PAGE_SIZE,
+            "has_more": has_more,
         })
 
     try:
         uid = cl.user_id_from_username(target_username)
-        medias, end_cursor = cl.user_medias_paginated(uid, amount=PREVIEW_PAGE_SIZE)
+        cursor_state = {"cursor": ""}
+        def fetch_batch():
+            batch, ec = cl.user_medias_paginated(uid, amount=PREVIEW_PAGE_SIZE, end_cursor=cursor_state["cursor"])
+            cursor_state["cursor"] = ec
+            return batch
+        if date_from or date_to:
+            medias, has_more = _fetch_filtered_page(fetch_batch, date_from, date_to, PREVIEW_PAGE_SIZE)
+        else:
+            medias = fetch_batch()
+            has_more = bool(cursor_state["cursor"])
     except Exception as e:
         return jsonify({"ok": False, "msg": f"Erro ao buscar @{target_username}: {_translate_any_error(e)}"})
 
     preview_cache[cache_key] = {
-        "cl": cl, "engine": "instagrapi", "uid": uid, "medias": list(medias), "end_cursor": end_cursor,
+        "cl": cl, "engine": "instagrapi", "uid": uid, "medias": list(medias), "end_cursor": cursor_state["cursor"],
         "kind": "post", "target": target_username, "label": f"@{target_username}",
         "folder": f"{DOWNLOADS_DIR}/{target_username}",
+        "date_from": date_from, "date_to": date_to,
     }
 
     return jsonify({
         "ok": True,
         "items": [_media_preview_item(m) for m in medias],
         "cache_key": cache_key,
-        "has_more": bool(end_cursor),
+        "has_more": has_more,
     })
 
 @app.route("/api/preview-more", methods=["POST"])
@@ -841,38 +980,55 @@ def api_preview_more():
     cache = preview_cache.get(cache_key)
     if not cache:
         return jsonify({"ok": False, "msg": "Preview expirado, busque de novo."})
+    date_from = cache.get("date_from")
+    date_to = cache.get("date_to")
 
     if cache.get("engine") == "instaloader":
         it = cache.get("posts_iter")
         if it is None:
             return jsonify({"ok": True, "items": [], "has_more": False})
         try:
-            batch = list(itertools.islice(it, PREVIEW_PAGE_SIZE))
+            if date_from or date_to:
+                batch, has_more = _fetch_filtered_page(
+                    lambda: list(itertools.islice(it, PREVIEW_PAGE_SIZE)),
+                    date_from, date_to, PREVIEW_PAGE_SIZE)
+            else:
+                batch = list(itertools.islice(it, PREVIEW_PAGE_SIZE))
+                has_more = len(batch) == PREVIEW_PAGE_SIZE
         except Exception as e:
             return jsonify({"ok": False, "msg": f"Erro ao buscar mais midias: {_translate_any_error(e)}"})
         cache["medias"].extend(batch)
         return jsonify({
             "ok": True,
             "items": [_iloader_preview_item(p, is_downloaded) for p in batch],
-            "has_more": len(batch) == PREVIEW_PAGE_SIZE,
+            "has_more": has_more,
         })
 
     if not cache.get("end_cursor"):
         return jsonify({"ok": True, "items": [], "has_more": False})
 
     try:
-        medias, end_cursor = cache["cl"].user_medias_paginated(
-            cache["uid"], amount=PREVIEW_PAGE_SIZE, end_cursor=cache["end_cursor"])
+        cursor_state = {"cursor": cache["end_cursor"]}
+        def fetch_batch():
+            batch, ec = cache["cl"].user_medias_paginated(
+                cache["uid"], amount=PREVIEW_PAGE_SIZE, end_cursor=cursor_state["cursor"])
+            cursor_state["cursor"] = ec
+            return batch
+        if date_from or date_to:
+            medias, has_more = _fetch_filtered_page(fetch_batch, date_from, date_to, PREVIEW_PAGE_SIZE)
+        else:
+            medias = fetch_batch()
+            has_more = bool(cursor_state["cursor"])
     except Exception as e:
         return jsonify({"ok": False, "msg": f"Erro ao buscar mais midias: {_translate_any_error(e)}"})
 
     cache["medias"].extend(medias)
-    cache["end_cursor"] = end_cursor
+    cache["end_cursor"] = cursor_state["cursor"]
 
     return jsonify({
         "ok": True,
         "items": [_media_preview_item(m) for m in medias],
-        "has_more": bool(end_cursor),
+        "has_more": has_more,
     })
 
 @app.route("/api/preview-url", methods=["POST"])
@@ -1115,23 +1271,15 @@ def _do_selected_download(cache, medias):
 
     _speed_stats["bytes"] = 0
     _speed_stats["seconds"] = 0.0
+    last_failed_groups.clear()
     scrape_state.update(running=True, connected=True, current_account=account_label,
                         message=f"Baixando selecionados de {label}...", progress=0,
                         total=len(medias), current=label, logs=[], stop_requested=False,
-                        zip_url=None, speed="", speed_avg="")
+                        zip_url=None, speed="", speed_avg="", failed_count=0)
     os.makedirs(folder, exist_ok=True)
-    all_saved = []
     try:
-        for i, m in enumerate(medias):
-            if _stopped() or daily_limit_reached():
-                break
-            scrape_state["progress"] = i + 1
-            if is_downloaded(_item_id(m)):
-                continue
-            saved = downloader(cl, tu, m, folder)
-            all_saved.extend(saved)
-            if saved:
-                _human_delay_after(m)
+        all_saved, _count, failed = _run_downloads(medias, downloader, cl, tu, folder, _item_id)
+        _register_failed(cl, tu, folder, downloader, failed, _item_id)
 
         if not scrape_state.get("stop_requested"):
             zip_url = _make_zip(tu, all_saved)
@@ -1139,6 +1287,56 @@ def _do_selected_download(cache, medias):
             done_msg = f"Finalizado: {len(all_saved)} arquivos baixados"
             scrape_state["message"] = done_msg + (" (zip pronto)" if zip_url else "")
             _add_log("Download dos selecionados concluido", "success")
+    except Exception as e:
+        _add_log(f"Erro fatal: {e}", "error")
+        scrape_state["message"] = f"Erro fatal: {e}"
+    finally:
+        scrape_state["running"] = False
+        scrape_state["connected"] = False
+        scrape_state["current"] = ""
+        scrape_state["stop_requested"] = False
+
+@app.route("/api/retry-failed", methods=["POST"])
+def api_retry_failed():
+    global scrape_state
+    if scrape_state["running"]:
+        return jsonify({"ok": False, "msg": "Scraping ja esta rodando"})
+    if not last_failed_groups:
+        return jsonify({"ok": False, "msg": "Nada pra tentar de novo"})
+    threading.Thread(target=_do_retry_failed, daemon=True).start()
+    return jsonify({"ok": True, "msg": "Tentando de novo os itens com erro..."})
+
+def _do_retry_failed():
+    """Refaz so os downloads que falharam na ultima leva (scrape automatico
+    ou selecionados), sem precisar buscar tudo de novo."""
+    global scrape_state
+    groups = list(last_failed_groups)
+    last_failed_groups.clear()
+    total = sum(len(g["medias"]) for g in groups)
+
+    _speed_stats["bytes"] = 0
+    _speed_stats["seconds"] = 0.0
+    scrape_state.update(running=True, connected=True, current_account="",
+                        message="Tentando de novo os itens com erro...", progress=0,
+                        total=total, current="", logs=[], stop_requested=False,
+                        zip_url=None, speed="", speed_avg="", failed_count=0)
+    all_saved = []
+    try:
+        offset = 0
+        for g in groups:
+            if _stopped():
+                break
+            saved, _count, still_failed = _run_downloads(
+                g["medias"], g["downloader"], g["cl"], g["tu"], g["folder"], g["get_id"],
+                progress_offset=offset)
+            offset += len(g["medias"])
+            all_saved.extend(saved)
+            _register_failed(g["cl"], g["tu"], g["folder"], g["downloader"], still_failed, g["get_id"])
+
+        if not scrape_state.get("stop_requested"):
+            recuperados = total - scrape_state.get("failed_count", 0)
+            scrape_state["message"] = f"Finalizado: {recuperados} recuperados de {total}"
+            _add_log("Nova tentativa concluida", "success")
     except Exception as e:
         _add_log(f"Erro fatal: {e}", "error")
         scrape_state["message"] = f"Erro fatal: {e}"

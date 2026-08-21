@@ -231,6 +231,7 @@ select.input { appearance:none; cursor:pointer;
   background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right 10px center; background-size:15px;
   padding-right:32px; }
+input[type=date].input { color-scheme:dark; cursor:pointer; }
 .input-row { display:flex; gap:8px; }
 .input-row > * { min-width:0; }
 .acc-bar { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
@@ -627,6 +628,13 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
         <input class="input" id="preview-target" placeholder="Perfil do Instagram (sem @)" onkeydown="if(event.key==='Enter')searchProfile()">
         <button class="btn btn-primary" onclick="searchProfile()" id="btn-preview-load">Buscar</button>
       </div>
+      <div class="input-row" id="busca-perfil-dates" style="margin-top:8px;">
+        <input class="input" type="date" id="preview-date-from" title="Só a partir dessa data">
+        <input class="input" type="date" id="preview-date-to" title="Só até essa data">
+      </div>
+      <p class="card-sub" id="busca-perfil-dates-hint" style="margin-top:6px;">
+        Opcional: filtra os posts por período. Deixe em branco pra ver tudo.
+      </p>
       <div class="input-row" id="busca-link" hidden>
         <input class="input" id="preview-url" placeholder="Cole o link do post/reel" onkeydown="if(event.key==='Enter')buscarPorLink()">
         <button class="btn btn-primary" onclick="buscarPorLink()" id="btn-url-load">Abrir</button>
@@ -687,6 +695,11 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
         </div>
       </div>
       <div id="preview-zip" hidden style="margin-bottom:12px;"></div>
+      <div id="retry-failed-box" hidden style="margin-bottom:12px;">
+        <button class="btn btn-danger btn-full" onclick="retryFailed()">
+          <svg class="icon"><use href="#i-zap"/></svg> <span id="retry-failed-label">Tentar novamente</span>
+        </button>
+      </div>
       <div class="log-console" id="log-console"></div>
     </div>
   </section>
@@ -1150,11 +1163,47 @@ let previewCacheKey = '';
 let previewTypeFilter = 'all';
 let highlightsList = [];
 let lastZipUrl = null;
+let lastFailedSeen = 0;
+let lastFinishedMsg = '';
+let audioCtx = null;
+
+function playChime() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const now = audioCtx.currentTime;
+    [660, 880].forEach((freq, i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      o.type = 'sine';
+      o.frequency.setValueAtTime(freq, now + i * 0.12);
+      g.gain.setValueAtTime(0.001, now + i * 0.12);
+      g.gain.exponentialRampToValueAtTime(0.18, now + i * 0.12 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.45);
+      o.start(now + i * 0.12);
+      o.stop(now + i * 0.12 + 0.5);
+    });
+  } catch (e) { /* audio nao suportado/bloqueado -- nao quebra o app */ }
+}
+
+function notifyFinished(msg) {
+  playChime();
+  toast(msg);
+}
+
+async function retryFailed() {
+  const r = await api('/api/retry-failed', {method:'POST'});
+  if (!r.ok) return toast(r.msg || 'Erro', 'err');
+  toast(r.msg);
+}
 
 function previewAccountBody() {
   const accVal = $('preview-account').value;
   const body = {target_username: previewTarget};
   if (accVal !== '') body.account_index = parseInt(accVal);
+  const df = $('preview-date-from').value, dt = $('preview-date-to').value;
+  if (df) body.date_from = df;
+  if (dt) body.date_to = dt;
   return body;
 }
 
@@ -1187,6 +1236,8 @@ function setModoBusca(modo) {
   $('seg-perfil').classList.toggle('active', !porLink);
   $('seg-link').classList.toggle('active', porLink);
   $('busca-perfil').hidden = porLink;
+  $('busca-perfil-dates').hidden = porLink;
+  $('busca-perfil-dates-hint').hidden = porLink;
   $('busca-link').hidden = !porLink;
   // as abas Posts/Reels/Stories/Destaques so fazem sentido buscando por perfil
   $('preview-tabs').hidden = porLink || !previewTarget;
@@ -1494,6 +1545,23 @@ function pollStatus() {
       } else {
         $('header-badge').className = 'status-badge offline';
         $('header-badge').innerHTML = '<span class="status-dot red"></span> Desconectado';
+      }
+
+      if (s.failed_count > 0) {
+        $('retry-failed-box').hidden = false;
+        $('retry-failed-label').textContent = `Tentar novamente (${s.failed_count} com erro)`;
+        $('log-card').hidden = false;
+        if (s.failed_count !== lastFailedSeen) {
+          toast(`${s.failed_count} item(s) falharam. Toque em "Tentar novamente" pra reprocessar.`, 'err');
+        }
+      } else {
+        $('retry-failed-box').hidden = true;
+      }
+      lastFailedSeen = s.failed_count || 0;
+
+      if (s.message && s.message.startsWith('Finalizado') && s.message !== lastFinishedMsg) {
+        lastFinishedMsg = s.message;
+        notifyFinished(s.message);
       }
     }
   });
