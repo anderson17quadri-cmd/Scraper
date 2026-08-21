@@ -1200,7 +1200,22 @@ def api_open_folder():
 
 @app.route("/api/downloads")
 def api_downloads():
-    rows = db_query("SELECT file, username, type, date, downloaded_at FROM downloads ORDER BY downloaded_at DESC LIMIT 100")
+    # busca feita no banco, nao no navegador: a lista e limitada a 100
+    # itens, entao filtrar so no front-end deixaria de fora arquivos
+    # antigos que casam com o termo procurado
+    termo = (request.args.get("q") or "").strip()
+    tipo = (request.args.get("type") or "").strip()
+    where, params = [], []
+    if termo:
+        where.append("(file LIKE ? OR username LIKE ?)")
+        params += [f"%{termo}%", f"%{termo}%"]
+    if tipo in ("photo", "video"):
+        where.append("type = ?")
+        params.append(tipo)
+    filtro = ("WHERE " + " AND ".join(where)) if where else ""
+    rows = db_query(
+        f"SELECT file, username, type, date, downloaded_at FROM downloads {filtro} "
+        "ORDER BY downloaded_at DESC LIMIT 100", tuple(params))
     files = []
     for r in rows:
         uname, fname = r[1], r[0]

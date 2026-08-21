@@ -785,6 +785,14 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
         <span class="card-title">Arquivos</span>
         <button class="btn btn-ghost btn-xs" onclick="resetDB()"><svg class="icon"><use href="#i-trash"/></svg> Limpar histórico</button>
       </div>
+      <div class="input-row" style="margin-bottom:10px;">
+        <input class="input" id="files-search" placeholder="Buscar por perfil ou arquivo..." oninput="buscarArquivos()">
+        <select class="input" id="files-type" style="max-width:120px;" onchange="buscarArquivos()">
+          <option value="">Tudo</option>
+          <option value="photo">Fotos</option>
+          <option value="video">Vídeos</option>
+        </select>
+      </div>
       <div class="scroll-list" id="all-files" style="max-height:350px;">Carregando...</div>
     </div>
   </section>
@@ -1477,16 +1485,45 @@ async function refreshAll() {
   });
   $('top-profiles').innerHTML = tphtml || '<div class="empty"><p>Nenhum perfil</p></div>';
 
-  // All files
-  const files = await api('/api/downloads');
+  // All files (respeitando busca/filtro se o usuario digitou algo)
+  const files = await api('/api/downloads' + filtroArquivosQS());
+  renderArquivos(files);
+}
+
+// ─── BUSCA NA BIBLIOTECA ─────────────────────────────────────────────────────
+let buscaTimer = null;
+
+function filtroArquivosQS() {
+  const q = ($('files-search')?.value || '').trim();
+  const t = $('files-type')?.value || '';
+  const p = new URLSearchParams();
+  if (q) p.set('q', q);
+  if (t) p.set('type', t);
+  const s = p.toString();
+  return s ? '?' + s : '';
+}
+
+function buscarArquivos() {
+  // espera o usuario parar de digitar antes de ir ao servidor
+  clearTimeout(buscaTimer);
+  buscaTimer = setTimeout(async () => {
+    const files = await api('/api/downloads' + filtroArquivosQS());
+    renderArquivos(files);
+  }, 300);
+}
+
+function renderArquivos(files) {
   let fhtml = '';
-  if (files.length === 0) fhtml = '<div class="empty"><p>Nenhum arquivo</p></div>';
-  files.forEach(f => {
+  if (!files || files.length === 0) {
+    const filtrando = filtroArquivosQS() !== '';
+    fhtml = `<div class="empty"><p>${filtrando ? 'Nada encontrado com esse filtro' : 'Nenhum arquivo ainda'}</p></div>`;
+  }
+  (files || []).forEach(f => {
     fhtml += `<div class="dl-item">
       ${thumbCell(f.type, f.exists ? f.url : null)}
       <div class="dl-info"><strong>${f.file}</strong><small>@${f.username} &middot; ${(f.date||'').substring(0,16)}</small></div>
       ${f.exists
-        ? `<a href="${f.url}" target="_blank" class="dl-link"><button class="btn btn-primary btn-xs">Download</button></a>`
+        ? `<a href="${f.url}" target="_blank" class="dl-link"><button class="btn btn-primary btn-xs">Baixar</button></a>`
         : '<span class="badge badge-red">Deletado</span>'}
     </div>`;
   });
