@@ -275,6 +275,14 @@ select.input { appearance:none; cursor:pointer;
   height:100%; background: linear-gradient(90deg, var(--accent), var(--accent-2));
   border-radius:99px; transition:width .4s ease; width:0%;
 }
+.speed-stats { display:flex; gap:8px; margin-top:9px; flex-wrap:wrap; }
+.speed-chip {
+  display:flex; align-items:center; gap:6px; padding:5px 11px; border-radius:99px;
+  background:rgba(34,211,238,.09); border:1px solid rgba(34,211,238,.2);
+  font-size:0.74rem; color:var(--dim);
+}
+.speed-chip .icon { width:13px; height:13px; color:var(--accent-2); flex:none; }
+.speed-chip b { color:var(--text); font-weight:700; font-variant-numeric:tabular-nums; }
 
 /* ─── PREVIEW GRID ──────────────────────────────────────── */
 .preview-tabs { display:flex; gap:4px; margin-bottom:12px; padding:4px;
@@ -524,6 +532,7 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
   <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13" r="3.5"/></symbol>
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10"/><path d="M18 6h2"/><circle cx="16" cy="6" r="2"/><path d="M4 12h4"/><path d="M12 12h8"/><circle cx="10" cy="12" r="2"/><path d="M4 18h10"/><path d="M18 18h2"/><circle cx="16" cy="18" r="2"/></symbol>
   <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8Z"/></symbol>
 </defs>
 </svg>
 
@@ -672,6 +681,10 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
         <div class="progress-track">
           <div class="progress-fill" id="prog-fill"></div>
         </div>
+        <div class="speed-stats" id="speed-stats" hidden>
+          <span class="speed-chip"><svg class="icon"><use href="#i-zap"/></svg>Agora: <b id="speed-now">--</b></span>
+          <span class="speed-chip"><svg class="icon"><use href="#i-zap"/></svg>Média: <b id="speed-avg">--</b></span>
+        </div>
       </div>
       <div id="preview-zip" hidden style="margin-bottom:12px;"></div>
       <div class="log-console" id="log-console"></div>
@@ -752,17 +765,23 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
       <div class="card-header"><span class="card-title">Velocidade dos downloads</span></div>
       <p class="card-sub" style="margin-bottom:14px;">
         Pausa entre um download e outro. Mais lento imita melhor uma pessoa de verdade
-        e reduz o risco do Instagram bloquear a conta.
+        e reduz o risco do Instagram bloquear a conta. Mais rápido baixa tudo em menos
+        tempo, mas aumenta esse risco.
       </p>
+      <div class="seg-toggle" id="speed-presets" style="margin-bottom:16px;">
+        <button class="seg-btn" onclick="setVelocidade('segura')">Segura</button>
+        <button class="seg-btn" onclick="setVelocidade('rapida')">Rápida</button>
+        <button class="seg-btn" onclick="setVelocidade('maxima')">Máxima</button>
+      </div>
       <div class="field">
         <label>Pausa mínima <b id="lbl-delay-min">3s</b></label>
         <input type="range" id="cfg-delay-min" min="0" max="30" step="1"
-               oninput="$('lbl-delay-min').textContent=this.value+'s'" onchange="salvarConfig()">
+               oninput="$('lbl-delay-min').textContent=this.value+'s'; marcarPresetManual()" onchange="salvarConfig()">
       </div>
       <div class="field">
         <label>Pausa máxima <b id="lbl-delay-max">10s</b></label>
         <input type="range" id="cfg-delay-max" min="0" max="60" step="1"
-               oninput="$('lbl-delay-max').textContent=this.value+'s'" onchange="salvarConfig()">
+               oninput="$('lbl-delay-max').textContent=this.value+'s'; marcarPresetManual()" onchange="salvarConfig()">
       </div>
     </div>
 
@@ -1405,6 +1424,14 @@ function pollStatus() {
       $('header-status').textContent = s.current ? 'Scrapando '+s.current : s.message;
       $('header-badge').innerHTML = '<span class="status-dot pulse"></span> Scrapando...';
 
+      if (s.speed || s.speed_avg) {
+        $('speed-stats').hidden = false;
+        $('speed-now').textContent = s.speed || '--';
+        $('speed-avg').textContent = s.speed_avg || '--';
+      } else {
+        $('speed-stats').hidden = true;
+      }
+
       // Logs
       const lc = $('log-console');
       const current = lc.children.length;
@@ -1625,6 +1652,39 @@ async function carregarConfig() {
   $('lbl-posts').textContent = c.posts_per_profile ?? 15;
   $('lbl-limit').textContent = (c.max_downloads_per_day ? c.max_downloads_per_day : 'sem limite');
   configCarregada = true;
+  marcarPresetAtivo(c.delay_min ?? 3, c.delay_max ?? 10);
+}
+
+// presets rapidos da velocidade: cada um so ajusta as pausas min/max
+const VELOCIDADE_PRESETS = {
+  segura: { min: 3, max: 10 },
+  rapida: { min: 1, max: 3 },
+  maxima: { min: 0, max: 1 },
+};
+
+function marcarPresetAtivo(min, max) {
+  const nome = Object.keys(VELOCIDADE_PRESETS).find(k =>
+    VELOCIDADE_PRESETS[k].min === min && VELOCIDADE_PRESETS[k].max === max);
+  document.querySelectorAll('#speed-presets .seg-btn').forEach(b => b.classList.remove('active'));
+  if (nome) {
+    const idx = Object.keys(VELOCIDADE_PRESETS).indexOf(nome);
+    document.querySelectorAll('#speed-presets .seg-btn')[idx].classList.add('active');
+  }
+}
+
+function marcarPresetManual() {
+  document.querySelectorAll('#speed-presets .seg-btn').forEach(b => b.classList.remove('active'));
+}
+
+function setVelocidade(nome) {
+  const p = VELOCIDADE_PRESETS[nome];
+  if (!p) return;
+  $('cfg-delay-min').value = p.min;
+  $('cfg-delay-max').value = p.max;
+  $('lbl-delay-min').textContent = p.min + 's';
+  $('lbl-delay-max').textContent = p.max + 's';
+  marcarPresetAtivo(p.min, p.max);
+  salvarConfig();
 }
 
 async function salvarConfig() {

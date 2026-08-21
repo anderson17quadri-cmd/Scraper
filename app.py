@@ -146,7 +146,7 @@ def upsert_account(username, password=None, sessionid=None, engine=None):
 # ─── SCRAPING ENGINE ──────────────────────────────────────────────────────────
 scrape_state = {"running": False, "connected": False, "current_account": "",
                 "message": "Pronto", "progress": 0, "total": 0, "current": "", "logs": [],
-                "stop_requested": False, "zip_url": None}
+                "stop_requested": False, "zip_url": None, "speed": "", "speed_avg": ""}
 
 # cache em memoria: cache_key -> {"cl":.., "medias":[...], "kind": "post"|"story",
 # "target":.., "label":.., "folder":.., "uid":.. , "end_cursor":..}
@@ -310,12 +310,12 @@ def _download_one(cl, tu, m, folder):
     saved_paths = []
     try:
         if m.media_type == 1:
-            path = cl.photo_download_by_url(m.thumbnail_url, filename=f"{tu}_{date_str}", folder=folder)
+            path = _timed_download(cl.photo_download_by_url, m.thumbnail_url, filename=f"{tu}_{date_str}", folder=folder)
             add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': 'photo', 'date': m.taken_at.isoformat()})
             _add_log(f"Download: {os.path.basename(path)}", "success")
             saved_paths.append(str(path))
         elif m.media_type == 2:
-            path = cl.video_download_by_url(m.video_url, filename=f"{tu}_{date_str}", folder=folder)
+            path = _timed_download(cl.video_download_by_url, m.video_url, filename=f"{tu}_{date_str}", folder=folder)
             add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': 'video', 'date': m.taken_at.isoformat()})
             _add_log(f"Download: {os.path.basename(path)}", "success")
             saved_paths.append(str(path))
@@ -323,10 +323,10 @@ def _download_one(cl, tu, m, folder):
             for j, res in enumerate(m.resources):
                 try:
                     if res.media_type == 1:
-                        path = cl.photo_download_by_url(res.thumbnail_url, filename=f"{tu}_{date_str}_c{j}", folder=folder)
+                        path = _timed_download(cl.photo_download_by_url, res.thumbnail_url, filename=f"{tu}_{date_str}_c{j}", folder=folder)
                         rtype = 'photo'
                     else:
-                        path = cl.video_download_by_url(res.video_url, filename=f"{tu}_{date_str}_c{j}", folder=folder)
+                        path = _timed_download(cl.video_download_by_url, res.video_url, filename=f"{tu}_{date_str}_c{j}", folder=folder)
                         rtype = 'video'
                     add_download({'media_id': res.pk, 'username': tu, 'file': os.path.basename(path), 'type': rtype, 'date': m.taken_at.isoformat()})
                     _add_log(f"Download: {os.path.basename(path)}", "success")
@@ -352,7 +352,7 @@ def _download_story_item(cl, tu, s, folder):
     try:
         url = s.thumbnail_url if s.media_type == 1 else s.video_url
         mtype = 'photo' if s.media_type == 1 else 'video'
-        path = cl.story_download_by_url(url, filename=f"{tu}_story_{date_str}", folder=folder)
+        path = _timed_download(cl.story_download_by_url, url, filename=f"{tu}_story_{date_str}", folder=folder)
         add_download({'media_id': s.id, 'username': tu, 'file': os.path.basename(path), 'type': mtype, 'date': datetime.now().isoformat()})
         _add_log(f"Download: {os.path.basename(path)}", "success")
         saved_paths.append(str(path))
@@ -367,15 +367,45 @@ def _download_story_item(cl, tu, s, folder):
 
 def _human_delay_after(m):
     """Pausa entre downloads, usando os valores configurados pelo usuario
-    (antes era fixo em 3-10s e o config.json era ignorado)."""
+    (antes era fixo em 3-10s e o config.json era ignorado).
+
+    Antes essa pausa somava a duracao do video (ate 60s extras por video),
+    simulando alguem "assistindo" antes de baixar -- isso deixava o download
+    de varios reels extremamente lento. Agora usa so a pausa configurada,
+    igual pras fotos; quem quiser mais cautela ajusta a pausa em Ajustes."""
     cfg = get_cfg()
     lo = max(0, float(cfg.get("delay_min", 3)))
     hi = max(lo, float(cfg.get("delay_max", 10)))
-    is_video = getattr(m, 'media_type', None) == 2 or getattr(m, 'is_video', False)
-    if is_video and getattr(m, 'video_duration', None):
-        time.sleep(min(m.video_duration + lo, 60))
-    else:
-        time.sleep(random.uniform(lo, hi))
+    time.sleep(random.uniform(lo, hi))
+
+_speed_stats = {"bytes": 0, "seconds": 0.0}
+
+def _fmt_speed(bytes_per_sec):
+    mbps = bytes_per_sec / (1024 * 1024)
+    if mbps >= 1:
+        return f"{mbps:.1f} MB/s"
+    return f"{bytes_per_sec / 1024:.0f} KB/s"
+
+def _record_speed(size_bytes, elapsed_seconds):
+    """Atualiza a velocidade (atual e media) mostrada no painel de Progresso."""
+    if size_bytes <= 0 or elapsed_seconds <= 0:
+        return
+    _speed_stats["bytes"] += size_bytes
+    _speed_stats["seconds"] += elapsed_seconds
+    scrape_state["speed"] = _fmt_speed(size_bytes / elapsed_seconds)
+    scrape_state["speed_avg"] = _fmt_speed(_speed_stats["bytes"] / _speed_stats["seconds"])
+
+def _timed_download(fn, *args, **kwargs):
+    """Roda uma funcao de download do instagrapi (que retorna o caminho do
+    arquivo salvo) medindo o tempo, pra alimentar o indicador de velocidade."""
+    t0 = time.perf_counter()
+    path = fn(*args, **kwargs)
+    elapsed = time.perf_counter() - t0
+    try:
+        _record_speed(os.path.getsize(path), elapsed)
+    except OSError:
+        pass
+    return path
 
 def downloads_today():
     row = db_query("SELECT COUNT(*) FROM downloads WHERE DATE(downloaded_at) = DATE('now')")
@@ -403,9 +433,11 @@ def _item_id(m):
 
 def _do_scrape(account_index=None, target_index=None):
     global scrape_state
+    _speed_stats["bytes"] = 0
+    _speed_stats["seconds"] = 0.0
     scrape_state.update(running=True, connected=False, current_account="",
                         message="Ligando motor...", progress=0, total=0, current="", logs=[],
-                        stop_requested=False, zip_url=None)
+                        stop_requested=False, zip_url=None, speed="", speed_avg="")
 
     try:
         cfg = get_cfg()
@@ -516,7 +548,7 @@ def _do_scrape(account_index=None, target_index=None):
                         scrape_state["progress"] = i + 1
                         if is_downloaded(_item_id(m)):
                             continue
-                        saved = _iloader_download_post(m, tu, folder, add_download, _add_log)
+                        saved = _iloader_download_post(m, tu, folder, add_download, _add_log, _record_speed)
                         downloaded_count += len(saved)
                         if saved:
                             _human_delay_after(m)
@@ -1065,16 +1097,18 @@ def _do_selected_download(cache, medias):
 
     if engine == "instaloader":
         iloader_fn = _iloader_download_post if kind == "post" else _iloader_download_story
-        downloader = lambda cl, tu, m, folder: iloader_fn(m, tu, folder, add_download, _add_log)
+        downloader = lambda cl, tu, m, folder: iloader_fn(m, tu, folder, add_download, _add_log, _record_speed)
         account_label = getattr(cl.context, "username", "") or ""
     else:
         downloader = _download_one if kind == "post" else _download_story_item
         account_label = getattr(cl, "username", "") or ""
 
+    _speed_stats["bytes"] = 0
+    _speed_stats["seconds"] = 0.0
     scrape_state.update(running=True, connected=True, current_account=account_label,
                         message=f"Baixando selecionados de {label}...", progress=0,
                         total=len(medias), current=label, logs=[], stop_requested=False,
-                        zip_url=None)
+                        zip_url=None, speed="", speed_avg="")
     os.makedirs(folder, exist_ok=True)
     all_saved = []
     try:

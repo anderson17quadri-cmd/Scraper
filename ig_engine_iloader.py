@@ -15,6 +15,7 @@ Suporta posts (feed), stories e destaques -- as mesmas coisas que o motor
 instagrapi baixa.
 """
 import os
+import time
 from datetime import datetime
 import requests
 import instaloader
@@ -93,12 +94,17 @@ def login_iloader_account(account: dict, session_file: str) -> instaloader.Insta
     return L
 
 
-def _http_download(url: str, path: str):
+def _http_download(url: str, path: str, speed_fn=None):
+    t0 = time.perf_counter()
     r = requests.get(url, stream=True, timeout=30)
     r.raise_for_status()
+    size = 0
     with open(path, "wb") as f:
         for chunk in r.iter_content(8192):
             f.write(chunk)
+            size += len(chunk)
+    if speed_fn:
+        speed_fn(size, time.perf_counter() - t0)
 
 
 def post_preview_item(post, is_downloaded_fn) -> dict:
@@ -119,7 +125,7 @@ def post_preview_item(post, is_downloaded_fn) -> dict:
     }
 
 
-def download_post(post, tu, folder, add_download_fn, log_fn):
+def download_post(post, tu, folder, add_download_fn, log_fn, speed_fn=None):
     """Baixa um post (foto/video/carrossel) via Instaloader, na maior
     resolucao disponivel. Retorna a lista de caminhos salvos."""
     date_str = post.date_utc.strftime("%Y%m%d_%H%M%S")
@@ -132,7 +138,7 @@ def download_post(post, tu, folder, add_download_fn, log_fn):
                     ext = "mp4" if node.is_video else "jpg"
                     fname = f"{tu}_{date_str}_c{j}.{ext}"
                     path = os.path.join(folder, fname)
-                    _http_download(url, path)
+                    _http_download(url, path, speed_fn)
                     add_download_fn({
                         'media_id': f"{post.mediaid}_{j}", 'username': tu, 'file': fname,
                         'type': 'video' if node.is_video else 'photo', 'date': post.date_utc.isoformat(),
@@ -146,7 +152,7 @@ def download_post(post, tu, folder, add_download_fn, log_fn):
             ext = "mp4" if post.is_video else "jpg"
             fname = f"{tu}_{date_str}.{ext}"
             path = os.path.join(folder, fname)
-            _http_download(url, path)
+            _http_download(url, path, speed_fn)
             add_download_fn({
                 'media_id': str(post.mediaid), 'username': tu, 'file': fname,
                 'type': 'video' if post.is_video else 'photo', 'date': post.date_utc.isoformat(),
@@ -200,7 +206,7 @@ def highlight_summary(h) -> dict:
     }
 
 
-def download_story_item(item, tu, folder, add_download_fn, log_fn):
+def download_story_item(item, tu, folder, add_download_fn, log_fn, speed_fn=None):
     """Baixa um item de story/destaque. Retorna lista de caminhos salvos."""
     date_str = (item.date_utc or datetime.utcnow()).strftime("%Y%m%d_%H%M%S")
     saved = []
@@ -209,7 +215,7 @@ def download_story_item(item, tu, folder, add_download_fn, log_fn):
         ext = "mp4" if item.is_video else "jpg"
         fname = f"{tu}_story_{date_str}.{ext}"
         path = os.path.join(folder, fname)
-        _http_download(url, path)
+        _http_download(url, path, speed_fn)
         add_download_fn({
             'media_id': str(item.mediaid), 'username': tu, 'file': fname,
             'type': 'video' if item.is_video else 'photo',
