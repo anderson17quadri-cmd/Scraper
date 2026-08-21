@@ -657,12 +657,22 @@ def api_accounts():
         return jsonify(jload(ACCOUNTS_PATH))
     data = request.get_json()
     if request.method == "POST":
+        username = (data.get("username") or "").strip()
+        password = (data.get("password") or "").strip()
+        sessionid = (data.get("sessionid") or "").strip()
+        if not username or not (password or sessionid):
+            return jsonify({"ok": False, "msg": "Informe usuario e senha (ou sessionid)"}), 400
         accs = jload(ACCOUNTS_PATH)
         engine = data.get("engine") if data.get("engine") in ("instagrapi", "instaloader") else "instagrapi"
-        accs.setdefault("accounts", []).append({
-            "username": data["username"], "password": data["password"], "engine": engine,
+        acc = {
+            "username": username, "engine": engine,
             "active": True, "created_at": datetime.now().isoformat(), "last_use": None
-        })
+        }
+        if sessionid:
+            acc["sessionid"] = sessionid
+        if password:
+            acc["password"] = password
+        accs.setdefault("accounts", []).append(acc)
         jsave(ACCOUNTS_PATH, accs)
         return jsonify({"ok": True})
     if request.method == "DELETE":

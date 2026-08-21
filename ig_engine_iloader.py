@@ -66,16 +66,41 @@ def translate_iloader_error(e: Exception) -> str:
     return f"Erro inesperado (Instaloader): {e}"
 
 
-def login_iloader_account(account: dict, session_file: str) -> instaloader.Instaloader:
-    """Mesma ideia do login_account() do motor instagrapi: reaproveita
-    sessao salva quando possivel, senao loga com usuario/senha e salva."""
-    L = instaloader.Instaloader(
+def _new_instaloader() -> instaloader.Instaloader:
+    return instaloader.Instaloader(
         download_pictures=False, download_videos=False, download_video_thumbnails=False,
         download_geotags=False, download_comments=False, save_metadata=False,
         compress_json=False, quiet=True,
     )
+
+
+def _login_by_sessionid(L: instaloader.Instaloader, username: str, sessionid: str):
+    """Loga reaproveitando o cookie sessionid copiado de um navegador --
+    mesma credencial usada pelo motor instagrapi na aba "Sessao" do login.
+
+    Evita o L.login(usuario, senha), que o Instagram reconhece facilmente
+    como script/bot e costuma responder com checkpoint de seguranca. Como
+    o sessionid vem de um login ja verificado (feito num navegador de
+    verdade), esse caminho tem bem menos chance de cair em checkpoint.
+
+    O site do Instagram exige um cookie csrftoken valido em toda
+    requisicao logada; pegamos um fazendo uma visita anonima antes de
+    aplicar o sessionid, do jeito que um navegador faria."""
+    resp = L.context._session.get("https://www.instagram.com/", timeout=15)
+    csrftoken = resp.cookies.get("csrftoken") or L.context._session.cookies.get("csrftoken")
+    L.context.load_session(username, {"sessionid": sessionid, "csrftoken": csrftoken or ""})
+    if not L.context.test_login():
+        raise LoginRequiredException("Sessao invalida ou expirada (Instaloader)")
+
+
+def login_iloader_account(account: dict, session_file: str) -> instaloader.Instaloader:
+    """Mesma ideia do login_account() do motor instagrapi: reaproveita
+    sessao salva quando possivel. Prefere sessionid (mais seguro contra
+    checkpoint) e só cai pra usuario/senha se não houver um salvo."""
+    L = _new_instaloader()
     username = account.get("username")
     password = account.get("password")
+    sessionid = account.get("sessionid")
 
     if os.path.exists(session_file):
         try:
@@ -85,8 +110,14 @@ def login_iloader_account(account: dict, session_file: str) -> instaloader.Insta
         except Exception:
             pass
 
+    if sessionid:
+        _login_by_sessionid(L, username, sessionid)
+        os.makedirs(os.path.dirname(session_file) or ".", exist_ok=True)
+        L.save_session_to_file(session_file)
+        return L
+
     if not username or not password:
-        raise BadCredentialsException("Conta sem usuario/senha salva pro motor Instaloader")
+        raise BadCredentialsException("Conta sem usuario/senha ou sessao salva pro motor Instaloader")
 
     L.login(username, password)
     os.makedirs(os.path.dirname(session_file) or ".", exist_ok=True)
