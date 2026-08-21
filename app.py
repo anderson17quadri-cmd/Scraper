@@ -868,6 +868,11 @@ def _do_test_accounts():
     accounts = jload(ACCOUNTS_PATH).get("accounts", [])
     account_test_state = {"running": True, "results": []}
     for i, acc in enumerate(accounts):
+        if i > 0:
+            # pausa entre uma conta e outra -- testar todas em sequencia
+            # rapida parece ataque automatizado pro Instagram e pode
+            # derrubar varias contas de uma vez (ja aconteceu)
+            time.sleep(random.uniform(4, 9))
         ok, msg = _test_one_account(acc)
         account_test_state["results"].append({
             "index": i, "username": acc.get("username"), "engine": acc.get("engine", "instagrapi"),
