@@ -431,6 +431,53 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
   background:linear-gradient(90deg, var(--accent), var(--accent-2)); }
 .usage-bar > div.cheio { background:linear-gradient(90deg, #f59e0b, var(--red)); }
 
+/* ─── DESKTOP: menu lateral e uso da largura toda ───────── */
+/* Em telas largas o menu de baixo (estilo celular) desperdicava a lateral
+   e espremia o conteudo numa coluna estreita no meio. Aqui ele vira uma
+   barra lateral e o conteudo ocupa a largura util. */
+@media (min-width:900px) {
+  .bottom-nav {
+    top:58px; bottom:0; right:auto; width:216px;
+    flex-direction:column; justify-content:flex-start; gap:3px;
+    border-top:none; border-right:1px solid var(--border);
+    padding:14px 12px; background:rgba(12,12,15,.55);
+  }
+  .nav-btn {
+    /* no celular os botoes dividem a largura (flex:1); na vertical isso
+       faria cada um esticar pra ocupar a altura toda da barra */
+    flex:0 0 auto;
+    flex-direction:row; max-width:none; width:100%;
+    justify-content:flex-start; gap:12px; padding:10px 12px;
+    font-size:0.87rem; border-radius:10px;
+  }
+  .nav-btn:hover { background:rgba(255,255,255,.04); color:var(--dim); }
+  .nav-btn .nav-icon {
+    width:26px; height:26px; border-radius:8px; font-size:1.05rem; background:none;
+  }
+  .nav-btn.active { background:rgba(255,255,255,.07); color:var(--text); }
+  .nav-btn.active .nav-icon {
+    background:linear-gradient(135deg, rgba(99,102,241,.32), rgba(34,211,238,.26));
+  }
+
+  .main { margin-left:216px; max-width:1180px; padding:26px 32px 48px; }
+  .grid-stats { grid-template-columns:repeat(4, 1fr); gap:14px; }
+  .preview-grid {
+    grid-template-columns:repeat(auto-fill, minmax(122px, 1fr));
+    gap:10px; max-height:none;
+  }
+  .scroll-list { max-height:none !important; }
+  .log-console { max-height:260px; }
+  #toast-container { left:auto; right:26px; bottom:26px; transform:none; width:auto; min-width:280px; }
+  .card { padding:22px; }
+  .welcome-hint { padding:64px 16px 56px; }
+}
+
+/* telas bem largas: mais colunas ainda, sem esticar demais o texto */
+@media (min-width:1400px) {
+  .main { max-width:1340px; }
+  .preview-grid { grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); }
+}
+
 /* ─── RESPONSIVE ────────────────────────────────────────── */
 @media (max-width:600px) {
   .grid2 { grid-template-columns:1fr; }
@@ -861,11 +908,17 @@ let loggedIn = false;
 let currentUser = '';
 
 // preenche um <select> preservando a opcao que ja estava escolhida
-function fillSelect(el, firstLabel, accounts) {
+function fillSelect(el, firstLabel, accounts, mostrarMotor = false) {
   const prev = el.value;
   let html = `<option value="">${firstLabel}</option>`;
   (accounts||[]).forEach((a, i) => {
-    if (a.active !== false) html += `<option value="${i}">@${a.username}</option>`;
+    if (a.active === false) return;
+    // sem o motor no rotulo nao da pra saber, na hora de baixar, se a
+    // conta escolhida usa Instagrapi ou Instaloader
+    const motor = mostrarMotor
+      ? ' · ' + (a.engine === 'instaloader' ? 'Instaloader' : 'Instagrapi')
+      : '';
+    html += `<option value="${i}">@${a.username}${motor}</option>`;
   });
   el.innerHTML = html;
   if ([...el.options].some(o => o.value === prev)) el.value = prev;
@@ -1368,7 +1421,11 @@ function pollStatus() {
       if (s.zip_url && s.zip_url !== lastZipUrl) {
         lastZipUrl = s.zip_url;
         $('preview-zip').hidden = false;
-        $('preview-zip').innerHTML = `<a href="${s.zip_url}" target="_blank"><button class="btn btn-success btn-full">${ic('package')} Baixar ZIP dos selecionados</button></a>`;
+        $('preview-zip').innerHTML = `<a href="${s.zip_url}" target="_blank"><button class="btn btn-success btn-full btn-lg">${ic('package')} Baixar ZIP dos selecionados</button></a>`;
+        // o card de progresso fica no fim da pagina: sem avisar e rolar
+        // ate ele, o zip pronto passava despercebido
+        toast('ZIP pronto! Toque no botão verde para baixar');
+        $('preview-zip').scrollIntoView({behavior:'smooth', block:'center'});
       }
 
       if (loggedIn) {
@@ -1436,8 +1493,8 @@ async function refreshAll() {
   $('accounts-list').innerHTML = ahtml || `<div class="empty"><span class="icon">${ic('users','icon icon-lg')}</span><p>Nenhuma conta adicionada</p></div>`;
 
   // Selects de conta (busca manual usa "Automatica", auto usa "Todas as contas")
-  fillSelect($('preview-account'), 'Automática', accs.accounts);
-  fillSelect($('scrape-account'), 'Todas as contas', accs.accounts);
+  fillSelect($('preview-account'), 'Automática', accs.accounts, true);
+  fillSelect($('scrape-account'), 'Todas as contas', accs.accounts, true);
 
   // Targets
   const tgt = await api('/api/targets');

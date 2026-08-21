@@ -119,29 +119,6 @@ def post_preview_item(post, is_downloaded_fn) -> dict:
     }
 
 
-def save_caption_sidecar(folder: str, base_name: str, post):
-    caption = (post.caption or "").strip() if post.caption else ""
-    lines = [caption] if caption else []
-    lines.append("")
-    lines.append("---")
-    lines.append(f"Data: {post.date_utc.strftime('%Y-%m-%d %H:%M')}")
-    try:
-        lines.append(f"Curtidas: {post.likes}")
-        lines.append(f"Comentarios: {post.comments}")
-    except Exception:
-        pass
-    try:
-        if post.location and post.location.name:
-            lines.append(f"Localizacao: {post.location.name}")
-    except Exception:
-        pass
-    try:
-        with open(os.path.join(folder, f"{base_name}.txt"), "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
-    except Exception:
-        pass
-
-
 def download_post(post, tu, folder, add_download_fn, log_fn):
     """Baixa um post (foto/video/carrossel) via Instaloader, na maior
     resolucao disponivel. Retorna a lista de caminhos salvos."""
@@ -164,8 +141,6 @@ def download_post(post, tu, folder, add_download_fn, log_fn):
                     saved.append(path)
                 except Exception:
                     pass
-            if saved:
-                save_caption_sidecar(folder, f"{tu}_{date_str}", post)
         else:
             url = post.video_url if post.is_video else post.url
             ext = "mp4" if post.is_video else "jpg"
@@ -178,7 +153,6 @@ def download_post(post, tu, folder, add_download_fn, log_fn):
             })
             log_fn(f"Download: {fname}", "success")
             saved.append(path)
-            save_caption_sidecar(folder, f"{tu}_{date_str}", post)
     except Exception as e:
         log_fn(f"Erro: {str(e)[:80]}", "error")
     return saved
