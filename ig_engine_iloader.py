@@ -74,7 +74,7 @@ def _new_instaloader() -> instaloader.Instaloader:
     )
 
 
-def _login_by_sessionid(L: instaloader.Instaloader, username: str, sessionid: str):
+def _session_login(L: instaloader.Instaloader, sessionid: str, username_hint: str = "") -> str:
     """Loga reaproveitando o cookie sessionid copiado de um navegador --
     mesma credencial usada pelo motor instagrapi na aba "Sessao" do login.
 
@@ -85,12 +85,26 @@ def _login_by_sessionid(L: instaloader.Instaloader, username: str, sessionid: st
 
     O site do Instagram exige um cookie csrftoken valido em toda
     requisicao logada; pegamos um fazendo uma visita anonima antes de
-    aplicar o sessionid, do jeito que um navegador faria."""
+    aplicar o sessionid, do jeito que um navegador faria. Nao precisa
+    saber o usuario de antemao -- test_login() descobre o usuario de
+    verdade direto pelo sessionid, do jeito que login_by_sessionid() do
+    motor instagrapi ja faz. Devolve o usuario descoberto."""
     resp = L.context._session.get("https://www.instagram.com/", timeout=15)
     csrftoken = resp.cookies.get("csrftoken") or L.context._session.cookies.get("csrftoken")
-    L.context.load_session(username, {"sessionid": sessionid, "csrftoken": csrftoken or ""})
-    if not L.context.test_login():
+    L.context.load_session(username_hint, {"sessionid": sessionid, "csrftoken": csrftoken or ""})
+    real_username = L.context.test_login()
+    if not real_username:
         raise LoginRequiredException("Sessao invalida ou expirada (Instaloader)")
+    L.context.username = real_username
+    return real_username
+
+
+def login_iloader_sessionid(sessionid: str) -> instaloader.Instaloader:
+    """Login direto por sessionid sem saber o usuario de antemao -- usado
+    na tela inicial de login (igual login_by_sessionid() do instagrapi)."""
+    L = _new_instaloader()
+    _session_login(L, sessionid)
+    return L
 
 
 def login_iloader_account(account: dict, session_file: str) -> instaloader.Instaloader:
@@ -111,7 +125,7 @@ def login_iloader_account(account: dict, session_file: str) -> instaloader.Insta
             pass
 
     if sessionid:
-        _login_by_sessionid(L, username, sessionid)
+        _session_login(L, sessionid, username)
         os.makedirs(os.path.dirname(session_file) or ".", exist_ok=True)
         L.save_session_to_file(session_file)
         return L

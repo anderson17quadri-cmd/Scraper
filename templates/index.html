@@ -260,6 +260,7 @@ input[type=date].input { color-scheme:dark; cursor:pointer; }
 .badge-blue { background:var(--blue-bg); color:var(--blue); }
 .badge-yellow { background:var(--yellow-bg); color:var(--yellow); }
 .badge-neutral { background:rgba(255,255,255,.06); color:var(--dim); }
+.badge-msg { max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 
 /* ─── SCRAPING CONTROLS ─────────────────────────────────── */
 .control-bar {
@@ -549,6 +550,11 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
       <button class="btn btn-ghost btn-xs login-tab" id="tab-password" onclick="setLoginTab('password')"><svg class="icon"><use href="#i-key"/></svg> Usuário e senha</button>
     </div>
 
+    <select class="input" id="login-engine" style="margin-bottom:10px;">
+      <option value="instagrapi">🔵 Instagrapi (padrão)</option>
+      <option value="instaloader">🟠 Instaloader (alternativo)</option>
+    </select>
+
     <!-- LOGIN POR SESSAO (like a browser) -->
     <div id="pane-session">
       <p class="login-hint">
@@ -735,6 +741,9 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
         <strong>sessão</strong> reaproveita um login já feito num navegador de verdade e
         tem bem menos chance de disparar um checkpoint de segurança do que usuário/senha.
       </p>
+      <button class="btn btn-ghost btn-full" style="margin-bottom:10px;" onclick="testAccounts()" id="btn-test-accounts">
+        <svg class="icon"><use href="#i-zap"/></svg> Testar contas (ver quais estão funcionando)
+      </button>
       <div class="scroll-list" id="accounts-list"></div>
     </div>
 
@@ -1007,7 +1016,7 @@ async function doSessionLogin() {
   $('btn-session-login').disabled = true;
   $('btn-session-login').textContent = 'Conectando...';
 
-  const r = await api('/api/login-session', {method:'POST', body:JSON.stringify({sessionid:sid})});
+  const r = await api('/api/login-session', {method:'POST', body:JSON.stringify({sessionid:sid, engine:$('login-engine').value})});
   $('btn-session-login').disabled = false;
   $('btn-session-login').textContent = 'Entrar com sessão';
 
@@ -1034,7 +1043,7 @@ async function doLogin() {
   $('btn-login').disabled = true;
   $('btn-login').textContent = 'Conectando...';
 
-  const r = await api('/api/login', {method:'POST', body:JSON.stringify({username:u, password:p})});
+  const r = await api('/api/login', {method:'POST', body:JSON.stringify({username:u, password:p, engine:$('login-engine').value})});
   $('btn-login').disabled = false;
   $('btn-login').textContent = 'Entrar no Instagram';
 
@@ -1195,6 +1204,34 @@ async function retryFailed() {
   const r = await api('/api/retry-failed', {method:'POST'});
   if (!r.ok) return toast(r.msg || 'Erro', 'err');
   toast(r.msg);
+}
+
+// ─── TESTAR CONTAS ─────────────────────────────────────────────────────────
+let accountTestResults = {};
+
+async function testAccounts() {
+  const r = await api('/api/test-accounts', {method:'POST'});
+  if (!r.ok) return toast(r.msg || 'Erro', 'err');
+  $('btn-test-accounts').disabled = true;
+  $('btn-test-accounts').textContent = 'Testando...';
+  pollTestAccounts();
+}
+
+async function pollTestAccounts() {
+  const s = await api('/api/test-accounts-status');
+  accountTestResults = {};
+  (s.results || []).forEach(r => accountTestResults[r.index] = r);
+  await refreshAll();
+  if (s.running) {
+    setTimeout(pollTestAccounts, 1000);
+  } else {
+    $('btn-test-accounts').disabled = false;
+    $('btn-test-accounts').innerHTML = `<svg class="icon"><use href="#i-zap"/></svg> Testar contas (ver quais estão funcionando)`;
+    if ((s.results || []).length > 0) {
+      const okCount = s.results.filter(r => r.ok).length;
+      toast(`${okCount} de ${s.results.length} contas funcionando`);
+    }
+  }
 }
 
 function previewAccountBody() {
@@ -1608,10 +1645,17 @@ async function refreshAll() {
     const method = a.sessionid ? 'sessão' : 'senha';
     const engine = a.engine === 'instaloader' ? 'Instaloader' : 'Instagrapi';
     const engCls = a.engine === 'instaloader' ? 'badge-yellow' : 'badge-blue';
+    const test = accountTestResults[i];
+    const shortMsg = (test && test.msg && test.msg.length > 70) ? test.msg.slice(0, 70) + '…' : (test && test.msg);
+    const testBadge = test
+      ? (test.ok
+          ? `<span class="badge badge-green" title="${test.msg}">✓ Funcionando</span>`
+          : `<span class="badge badge-red badge-msg" title="${test.msg}">✗ ${shortMsg}</span>`)
+      : '';
     ahtml += `<div class="list-item" style="opacity:${active?1:0.55}">
       <div class="info">
         <div class="name"><span class="status-dot ${active?'green':'red'}"></span>@${a.username}</div>
-        <div class="meta"><span class="badge ${engCls}">${engine}</span><span class="badge badge-neutral">${method}</span></div>
+        <div class="meta"><span class="badge ${engCls}">${engine}</span><span class="badge badge-neutral">${method}</span>${testBadge}</div>
       </div>
       <div class="actions">
         <button class="btn btn-ghost btn-xs" onclick="toggleAccount(${i})">${active?'Pausar':'Ativar'}</button>

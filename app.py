@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from ig_auth import login_account, login_by_sessionid, translate_ig_error
-from ig_engine_iloader import (login_iloader_account, translate_iloader_error,
+from ig_engine_iloader import (login_iloader_account, login_iloader_sessionid, translate_iloader_error,
                                post_preview_item as _iloader_preview_item,
                                download_post as _iloader_download_post,
                                story_preview_item as _iloader_story_item,
@@ -723,16 +723,19 @@ def api_login():
     data = request.get_json()
     username = data.get("username", "").strip()
     password = data.get("password", "").strip()
+    engine = data.get("engine") if data.get("engine") in ("instagrapi", "instaloader") else "instagrapi"
     if not username or not password:
         return jsonify({"ok": False, "msg": "Preencha todos os campos"})
 
-    sf = f"{SESSIONS_DIR}/{username}.json"
     try:
-        login_account({"username": username, "password": password}, sf)
+        if engine == "instaloader":
+            login_iloader_account({"username": username, "password": password}, f"{SESSIONS_DIR}/{username}.iloader")
+        else:
+            login_account({"username": username, "password": password}, f"{SESSIONS_DIR}/{username}.json")
     except Exception as e:
-        return jsonify({"ok": False, "msg": translate_ig_error(e)})
+        return jsonify({"ok": False, "msg": _translate_any_error(e)})
 
-    upsert_account(username, password=password)
+    upsert_account(username, password=password, engine=engine)
 
     global scrape_state
     scrape_state["connected"] = True
@@ -743,17 +746,23 @@ def api_login():
 def api_login_session():
     data = request.get_json() or {}
     sessionid = (data.get("sessionid") or "").strip()
+    engine = data.get("engine") if data.get("engine") in ("instagrapi", "instaloader") else "instagrapi"
     if not sessionid:
         return jsonify({"ok": False, "msg": "Cole o sessionid copiado do navegador"})
 
     try:
-        cl = login_by_sessionid(sessionid)
+        if engine == "instaloader":
+            L = login_iloader_sessionid(sessionid)
+            username = L.context.username
+            L.save_session_to_file(f"{SESSIONS_DIR}/{username}.iloader")
+        else:
+            cl = login_by_sessionid(sessionid)
+            username = cl.username
+            cl.dump_settings(f"{SESSIONS_DIR}/{username}.json")
     except Exception as e:
-        return jsonify({"ok": False, "msg": translate_ig_error(e)})
+        return jsonify({"ok": False, "msg": _translate_any_error(e)})
 
-    username = cl.username
-    cl.dump_settings(f"{SESSIONS_DIR}/{username}.json")
-    upsert_account(username, sessionid=sessionid)
+    upsert_account(username, sessionid=sessionid, engine=engine)
 
     global scrape_state
     scrape_state["connected"] = True
@@ -833,6 +842,51 @@ def api_toggle_account():
         accs["accounts"][idx]["active"] = not accs["accounts"][idx].get("active", True)
         jsave(ACCOUNTS_PATH, accs)
     return jsonify({"ok": True})
+
+# ─── TESTAR CONTAS ──────────────────────────────────────────────────────────
+# Checagem rapida de login em todas as contas salvas, pra saber ANTES de
+# buscar um perfil quais contas estao funcionando -- sem isso o usuario so
+# descobre que uma conta esta bloqueada/com senha errada depois de esperar
+# a busca inteira falhar.
+account_test_state = {"running": False, "results": []}
+
+def _test_one_account(acc):
+    engine = acc.get("engine", "instagrapi")
+    un = acc.get("username", "")
+    try:
+        if engine == "instaloader":
+            cl = login_iloader_account(acc, f"{SESSIONS_DIR}/{un}.iloader")
+        else:
+            cl = login_account(acc, f"{SESSIONS_DIR}/{un}.json")
+        active_clients[(un, engine)] = cl
+        return True, "Login OK"
+    except Exception as e:
+        return False, _translate_any_error(e)
+
+def _do_test_accounts():
+    global account_test_state
+    accounts = jload(ACCOUNTS_PATH).get("accounts", [])
+    account_test_state = {"running": True, "results": []}
+    for i, acc in enumerate(accounts):
+        ok, msg = _test_one_account(acc)
+        account_test_state["results"].append({
+            "index": i, "username": acc.get("username"), "engine": acc.get("engine", "instagrapi"),
+            "ok": ok, "msg": msg,
+        })
+    account_test_state["running"] = False
+
+@app.route("/api/test-accounts", methods=["POST"])
+def api_test_accounts():
+    if account_test_state["running"]:
+        return jsonify({"ok": False, "msg": "Ja tem um teste rodando"})
+    if scrape_state["running"]:
+        return jsonify({"ok": False, "msg": "Espera o download atual terminar antes de testar"})
+    threading.Thread(target=_do_test_accounts, daemon=True).start()
+    return jsonify({"ok": True, "msg": "Testando contas..."})
+
+@app.route("/api/test-accounts-status")
+def api_test_accounts_status():
+    return jsonify(account_test_state)
 
 @app.route("/api/toggle-target", methods=["POST"])
 def api_toggle_target():
