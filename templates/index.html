@@ -290,6 +290,10 @@ select.input { appearance:none; cursor:pointer;
   max-height:460px; overflow-y:auto; margin:0 -2px; padding:2px;
 }
 .welcome-hint { grid-column:1/-1; text-align:center; padding:40px 16px 32px; }
+/* mensagens (erro, "buscando...", "nada encontrado") entram na mesma
+   grade das miniaturas -- sem isso ficam espremidas na largura de uma
+   foto, quebrando o texto letra a letra */
+.preview-grid > .empty, #highlights-list > .empty { grid-column:1/-1; max-width:520px; margin:0 auto; }
 .welcome-hint .welcome-icon {
   width:60px; height:60px; margin:0 auto 16px; border-radius:18px;
   display:flex; align-items:center; justify-content:center; font-size:1.6rem;
