@@ -58,6 +58,7 @@ def main():
 
     flask_app_module.init_db()
     flask_app_module.init_files()
+    flask_app_module._sync_auto_mode()  # religa o agendamento se estava ligado
 
     port = _free_port()
 

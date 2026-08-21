@@ -116,11 +116,13 @@ def init_files():
     if not os.path.exists(TARGETS_PATH): jsave(TARGETS_PATH, {"targets": []})
     if not os.path.exists(CONFIG_PATH):
         jsave(CONFIG_PATH, {"delay_min": 3, "delay_max": 10, "posts_per_profile": 15,
-                            "auto_interval": 3600, "max_downloads_per_day": 500})
+                            "auto_interval": 3600, "max_downloads_per_day": 500,
+                            "auto_mode": False})
 
 def get_cfg():
     return jload(CONFIG_PATH, {"delay_min": 3, "delay_max": 10, "posts_per_profile": 15,
-                                "auto_interval": 3600, "max_downloads_per_day": 500})
+                                "auto_interval": 3600, "max_downloads_per_day": 500,
+                                "auto_mode": False})
 
 def upsert_account(username, password=None, sessionid=None, engine=None):
     accs = jload(ACCOUNTS_PATH)
@@ -396,11 +398,32 @@ def _download_story_item(cl, tu, s, folder):
     return saved_paths
 
 def _human_delay_after(m):
+    """Pausa entre downloads, usando os valores configurados pelo usuario
+    (antes era fixo em 3-10s e o config.json era ignorado)."""
+    cfg = get_cfg()
+    lo = max(0, float(cfg.get("delay_min", 3)))
+    hi = max(lo, float(cfg.get("delay_max", 10)))
     is_video = getattr(m, 'media_type', None) == 2 or getattr(m, 'is_video', False)
     if is_video and getattr(m, 'video_duration', None):
-        time.sleep(min(m.video_duration + 3, 60))
+        time.sleep(min(m.video_duration + lo, 60))
     else:
-        time.sleep(3 + random.random() * 7)
+        time.sleep(random.uniform(lo, hi))
+
+def downloads_today():
+    row = db_query("SELECT COUNT(*) FROM downloads WHERE DATE(downloaded_at) = DATE('now')")
+    return row[0][0] if row else 0
+
+def daily_limit_reached():
+    """Trava de seguranca: para de baixar ao atingir o limite diario
+    configurado (0 = sem limite). Reduz risco de bloqueio da conta."""
+    limite = int(get_cfg().get("max_downloads_per_day", 0) or 0)
+    if limite <= 0:
+        return False
+    if downloads_today() >= limite:
+        _add_log(f"Limite diario de {limite} downloads atingido -- parando por hoje", "error")
+        scrape_state["message"] = f"Limite diario ({limite}) atingido"
+        return True
+    return False
 
 def _item_id(m):
     """Id unico de uma midia, seja ela um objeto do instagrapi (.id) ou
@@ -520,7 +543,7 @@ def _do_scrape(account_index=None, target_index=None):
                     _add_log(f"@{tu}: {len(medias)} midias encontradas")
 
                     for i, m in enumerate(medias):
-                        if _stopped():
+                        if _stopped() or daily_limit_reached():
                             break
                         scrape_state["progress"] = i + 1
                         if is_downloaded(_item_id(m)):
@@ -546,7 +569,7 @@ def _do_scrape(account_index=None, target_index=None):
                     _add_log(f"@{tu}: {len(medias)} midias encontradas")
 
                     for i, m in enumerate(medias):
-                        if _stopped():
+                        if _stopped() or daily_limit_reached():
                             break
                         scrape_state["progress"] = i + 1
                         if is_downloaded(m.id):
@@ -690,6 +713,50 @@ def api_toggle_target():
         t["targets"][idx]["active"] = not t["targets"][idx].get("active", True)
         jsave(TARGETS_PATH, t)
     return jsonify({"ok": True})
+
+# ─── AGENDAMENTO AUTOMATICO ──────────────────────────────────────────────────
+# O config.json ja tinha "auto_interval" desde o inicio, mas nada no codigo
+# usava esse valor -- o agendamento simplesmente nao existia. Agora existe.
+auto_state = {"thread": None, "next_run": None}
+
+def _auto_loop():
+    while True:
+        cfg = get_cfg()
+        if not cfg.get("auto_mode"):
+            auto_state["next_run"] = None
+            return  # desligado: encerra a thread
+        intervalo = max(300, int(cfg.get("auto_interval", 3600) or 3600))
+        auto_state["next_run"] = (datetime.now() + timedelta(seconds=intervalo)).isoformat()
+
+        # dorme em fatias pra reagir rapido se o usuario desligar o modo auto
+        dormiu = 0
+        while dormiu < intervalo:
+            time.sleep(5)
+            dormiu += 5
+            if not get_cfg().get("auto_mode"):
+                auto_state["next_run"] = None
+                return
+
+        if not scrape_state["running"]:
+            _do_scrape()
+
+def _sync_auto_mode():
+    """Liga/desliga a thread do agendamento conforme a config."""
+    ligado = bool(get_cfg().get("auto_mode"))
+    viva = auto_state["thread"] is not None and auto_state["thread"].is_alive()
+    if ligado and not viva:
+        t = threading.Thread(target=_auto_loop, daemon=True)
+        auto_state["thread"] = t
+        t.start()
+
+@app.route("/api/auto-status")
+def api_auto_status():
+    return jsonify({
+        "auto_mode": bool(get_cfg().get("auto_mode")),
+        "next_run": auto_state["next_run"],
+        "downloads_today": downloads_today(),
+        "daily_limit": int(get_cfg().get("max_downloads_per_day", 0) or 0),
+    })
 
 @app.route("/api/scrape", methods=["POST"])
 def api_scrape():
@@ -966,7 +1033,7 @@ def _do_selected_download(cache, medias):
     all_saved = []
     try:
         for i, m in enumerate(medias):
-            if _stopped():
+            if _stopped() or daily_limit_reached():
                 break
             scrape_state["progress"] = i + 1
             if is_downloaded(_item_id(m)):
@@ -1012,11 +1079,46 @@ def api_stats():
 def api_config():
     if request.method == "GET":
         return jsonify(get_cfg())
-    data = request.get_json()
+    data = request.get_json() or {}
     cfg = get_cfg()
-    cfg.update(data)
+
+    # valida os numeros antes de salvar, pra nao gravar lixo que quebraria
+    # o download depois (ex: delay negativo, texto no lugar de numero)
+    limites = {"delay_min": (0, 300), "delay_max": (0, 600),
+               "posts_per_profile": (1, 500), "auto_interval": (300, 86400),
+               "max_downloads_per_day": (0, 100000)}
+    for chave, (lo, hi) in limites.items():
+        if chave in data:
+            try:
+                cfg[chave] = max(lo, min(hi, int(float(data[chave]))))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "msg": f"Valor invalido em {chave}"})
+    if "auto_mode" in data:
+        cfg["auto_mode"] = bool(data["auto_mode"])
+    if cfg.get("delay_max", 10) < cfg.get("delay_min", 3):
+        cfg["delay_max"] = cfg["delay_min"]
+
     jsave(CONFIG_PATH, cfg)
-    return jsonify({"ok": True})
+    _sync_auto_mode()
+    return jsonify({"ok": True, "config": cfg})
+
+@app.route("/api/open-folder", methods=["POST"])
+def api_open_folder():
+    """Abre a pasta de downloads no gerenciador de arquivos do sistema.
+    So faz sentido quando o app roda na propria maquina (build desktop);
+    no Termux/servidor remoto nao ha o que abrir."""
+    pasta = os.path.abspath(DOWNLOADS_DIR)
+    os.makedirs(pasta, exist_ok=True)
+    try:
+        if sys.platform == "win32":
+            os.startfile(pasta)
+        elif sys.platform == "darwin":
+            import subprocess; subprocess.Popen(["open", pasta])
+        else:
+            import subprocess; subprocess.Popen(["xdg-open", pasta])
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Nao consegui abrir a pasta ({e}). Ela fica em: {pasta}"})
+    return jsonify({"ok": True, "msg": "Pasta aberta", "path": pasta})
 
 @app.route("/api/downloads")
 def api_downloads():
@@ -1054,6 +1156,7 @@ def index():
 if __name__ == "__main__":
     init_db()
     init_files()
+    _sync_auto_mode()  # religa o agendamento se estava ligado
     print("\n" + "=" * 55)
     print("  IG-SCRAPER-PRO v4.0  |  WEB DASHBOARD")
     print("=" * 55)

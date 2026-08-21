@@ -386,6 +386,43 @@ select.input { appearance:none; cursor:pointer;
 .empty .icon { font-size:1.8rem; margin-bottom:10px; opacity:.55; display:block; }
 .empty p { font-size:0.83rem; }
 
+/* ─── AJUSTES ───────────────────────────────────────────── */
+.field { margin-bottom:18px; }
+.field:last-child { margin-bottom:0; }
+.field > label { display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-size:0.84rem; color:var(--dim); margin-bottom:9px; }
+.field > label b { color:var(--accent-2); font-weight:700; font-variant-numeric:tabular-nums; }
+.field small { display:block; margin-top:7px; font-size:0.74rem; line-height:1.5; }
+input[type=range] { -webkit-appearance:none; appearance:none; width:100%; height:5px;
+  background:rgba(255,255,255,.1); border-radius:99px; outline:none; cursor:pointer; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; appearance:none;
+  width:20px; height:20px; border-radius:50%; cursor:pointer;
+  background:linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow:0 2px 8px -2px rgba(99,102,241,.8); }
+input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; border-radius:50%;
+  background:var(--accent-2); cursor:pointer; }
+
+.switch-row { display:flex; align-items:center; justify-content:space-between; gap:14px; cursor:pointer; }
+.switch-row > span { display:flex; flex-direction:column; gap:2px; }
+.switch-row strong { font-size:0.87rem; font-weight:600; }
+.switch-row small { font-size:0.74rem; color:var(--muted); line-height:1.45; }
+.switch-row input[type=checkbox] { -webkit-appearance:none; appearance:none; flex-shrink:0;
+  width:44px; height:25px; border-radius:99px; background:rgba(255,255,255,.12);
+  position:relative; cursor:pointer; transition:background var(--transition); }
+.switch-row input[type=checkbox]::after { content:''; position:absolute; top:3px; left:3px;
+  width:19px; height:19px; border-radius:50%; background:#fff; transition:transform var(--transition); }
+.switch-row input[type=checkbox]:checked { background:linear-gradient(135deg, var(--accent), var(--accent-2)); }
+.switch-row input[type=checkbox]:checked::after { transform:translateX(19px); }
+
+.auto-sched { margin-top:16px; padding-top:16px; border-top:1px solid var(--border); }
+.usage-box { margin-top:16px; padding-top:14px; border-top:1px solid var(--border);
+  font-size:0.8rem; color:var(--dim); }
+.usage-bar { height:6px; background:rgba(255,255,255,.08); border-radius:99px;
+  overflow:hidden; margin-top:8px; }
+.usage-bar > div { height:100%; border-radius:99px; transition:width .4s ease;
+  background:linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.usage-bar > div.cheio { background:linear-gradient(90deg, #f59e0b, var(--red)); }
+
 /* ─── RESPONSIVE ────────────────────────────────────────── */
 @media (max-width:600px) {
   .grid2 { grid-template-columns:1fr; }
@@ -426,6 +463,7 @@ select.input { appearance:none; cursor:pointer;
   <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></symbol>
   <symbol id="i-cookie" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 4 4 0 0 1-5-5 4 4 0 0 1-4-4Z"/><path d="M8.5 10h.01"/><path d="M11 14.5h.01"/><path d="M15.5 15h.01"/></symbol>
   <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10"/><path d="M18 6h2"/><circle cx="16" cy="6" r="2"/><path d="M4 12h4"/><path d="M12 12h8"/><circle cx="10" cy="12" r="2"/><path d="M4 18h10"/><path d="M18 18h2"/><circle cx="16" cy="18" r="2"/></symbol>
   <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></symbol>
 </defs>
 </svg>
@@ -615,6 +653,72 @@ select.input { appearance:none; cursor:pointer;
         <select class="input" id="scrape-target"><option value="">Todos os alvos</option></select>
       </div>
       <button class="btn btn-success btn-full" id="btn-start" onclick="startScrape()"><svg class="icon"><use href="#i-play"/></svg> Iniciar download automático</button>
+
+      <div class="auto-sched">
+        <label class="switch-row">
+          <span>
+            <strong>Repetir sozinho</strong>
+            <small>Roda de tempos em tempos, sem você precisar clicar</small>
+          </span>
+          <input type="checkbox" id="cfg-auto-mode" onchange="salvarConfig()">
+        </label>
+        <div id="auto-interval-row" class="input-row" style="align-items:center;margin-top:10px;" hidden>
+          <span class="card-sub" style="white-space:nowrap;">A cada</span>
+          <select class="input" id="cfg-auto-interval" onchange="salvarConfig()">
+            <option value="1800">30 minutos</option>
+            <option value="3600">1 hora</option>
+            <option value="10800">3 horas</option>
+            <option value="21600">6 horas</option>
+            <option value="43200">12 horas</option>
+            <option value="86400">1 dia</option>
+          </select>
+        </div>
+        <p class="card-sub" id="auto-next" style="margin-top:8px;" hidden></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- PAGINA: AJUSTES -->
+  <section class="page" id="page-ajustes">
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-header"><span class="card-title">Velocidade dos downloads</span></div>
+      <p class="card-sub" style="margin-bottom:14px;">
+        Pausa entre um download e outro. Mais lento imita melhor uma pessoa de verdade
+        e reduz o risco do Instagram bloquear a conta.
+      </p>
+      <div class="field">
+        <label>Pausa mínima <b id="lbl-delay-min">3s</b></label>
+        <input type="range" id="cfg-delay-min" min="0" max="30" step="1"
+               oninput="$('lbl-delay-min').textContent=this.value+'s'" onchange="salvarConfig()">
+      </div>
+      <div class="field">
+        <label>Pausa máxima <b id="lbl-delay-max">10s</b></label>
+        <input type="range" id="cfg-delay-max" min="0" max="60" step="1"
+               oninput="$('lbl-delay-max').textContent=this.value+'s'" onchange="salvarConfig()">
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-header"><span class="card-title">Limites</span></div>
+      <div class="field">
+        <label>Posts por perfil no download automático <b id="lbl-posts">15</b></label>
+        <input type="range" id="cfg-posts" min="1" max="200" step="1"
+               oninput="$('lbl-posts').textContent=this.value" onchange="salvarConfig()">
+      </div>
+      <div class="field">
+        <label>Limite de downloads por dia <b id="lbl-limit">500</b></label>
+        <input type="range" id="cfg-limit" min="0" max="2000" step="50"
+               oninput="$('lbl-limit').textContent=(this.value==0?'sem limite':this.value)" onchange="salvarConfig()">
+        <small class="card-sub">Trava de segurança: ao atingir, o app para de baixar até o dia seguinte. Deixe em 0 para não ter limite.</small>
+      </div>
+      <div id="today-usage" class="usage-box"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Arquivos</span></div>
+      <button class="btn btn-ghost btn-full" onclick="abrirPasta()">
+        <svg class="icon"><use href="#i-folder"/></svg> Abrir pasta de downloads
+      </button>
     </div>
   </section>
 
@@ -681,6 +785,9 @@ select.input { appearance:none; cursor:pointer;
   <button class="nav-btn" data-page="biblioteca" onclick="showPage('biblioteca')">
     <span class="nav-icon"><svg class="icon"><use href="#i-library"/></svg></span><span class="nav-label">Biblioteca</span>
   </button>
+  <button class="nav-btn" data-page="ajustes" onclick="showPage('ajustes')">
+    <span class="nav-icon"><svg class="icon"><use href="#i-sliders"/></svg></span><span class="nav-label">Ajustes</span>
+  </button>
 </nav>
 
 <div id="toast-container"></div>
@@ -729,6 +836,7 @@ function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === name));
   window.scrollTo({top: 0, behavior: 'instant'});
+  if (name === 'ajustes' || name === 'contas') atualizarAuto();
 }
 
 // ─── TOAST ───────────────────────────────────────────────────────────────────
@@ -1312,6 +1420,78 @@ async function refreshAll() {
   $('all-files').innerHTML = fhtml;
 }
 
+// ─── AJUSTES / CONFIGURACOES ─────────────────────────────────────────────────
+let configCarregada = false;
+
+async function carregarConfig() {
+  const c = await api('/api/config');
+  if (!c || c.ok === false) return;
+  const set = (id, v) => { const el = $(id); if (el) el.value = v; };
+  set('cfg-delay-min', c.delay_min ?? 3);
+  set('cfg-delay-max', c.delay_max ?? 10);
+  set('cfg-posts', c.posts_per_profile ?? 15);
+  set('cfg-limit', c.max_downloads_per_day ?? 500);
+  set('cfg-auto-interval', String(c.auto_interval ?? 3600));
+  $('cfg-auto-mode').checked = !!c.auto_mode;
+  $('auto-interval-row').hidden = !c.auto_mode;
+  $('lbl-delay-min').textContent = (c.delay_min ?? 3) + 's';
+  $('lbl-delay-max').textContent = (c.delay_max ?? 10) + 's';
+  $('lbl-posts').textContent = c.posts_per_profile ?? 15;
+  $('lbl-limit').textContent = (c.max_downloads_per_day ? c.max_downloads_per_day : 'sem limite');
+  configCarregada = true;
+}
+
+async function salvarConfig() {
+  if (!configCarregada) return;
+  const auto = $('cfg-auto-mode').checked;
+  $('auto-interval-row').hidden = !auto;
+  const body = {
+    delay_min: parseInt($('cfg-delay-min').value),
+    delay_max: parseInt($('cfg-delay-max').value),
+    posts_per_profile: parseInt($('cfg-posts').value),
+    max_downloads_per_day: parseInt($('cfg-limit').value),
+    auto_interval: parseInt($('cfg-auto-interval').value),
+    auto_mode: auto,
+  };
+  const r = await api('/api/config', {method:'POST', body:JSON.stringify(body)});
+  if (!r.ok) return toast(r.msg || 'Erro ao salvar', 'err');
+  // o servidor pode ajustar valores (ex: max menor que min); reflete isso na tela
+  if (r.config) {
+    $('cfg-delay-max').value = r.config.delay_max;
+    $('lbl-delay-max').textContent = r.config.delay_max + 's';
+  }
+  atualizarAuto();
+}
+
+async function atualizarAuto() {
+  const a = await api('/api/auto-status');
+  if (!a || a.ok === false) return;
+
+  const el = $('auto-next');
+  if (a.auto_mode && a.next_run) {
+    const d = new Date(a.next_run);
+    el.hidden = false;
+    el.textContent = 'Próxima execução: ' + d.toLocaleString('pt-BR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+  } else {
+    el.hidden = true;
+  }
+
+  const box = $('today-usage');
+  if (!box) return;
+  if (a.daily_limit > 0) {
+    const pct = Math.min(100, Math.round(a.downloads_today / a.daily_limit * 100));
+    box.innerHTML = `Hoje: <b style="color:var(--text)">${a.downloads_today}</b> de ${a.daily_limit}
+      <div class="usage-bar"><div class="${pct>=100?'cheio':''}" style="width:${pct}%"></div></div>`;
+  } else {
+    box.innerHTML = `Hoje: <b style="color:var(--text)">${a.downloads_today}</b> downloads (sem limite)`;
+  }
+}
+
+async function abrirPasta() {
+  const r = await api('/api/open-folder', {method:'POST'});
+  toast(r.msg, r.ok ? 'ok' : 'err');
+}
+
 // ─── RESET ───────────────────────────────────────────────────────────────────
 async function resetDB() {
   if (!confirm('Apagar todo o histórico de downloads?')) return;
@@ -1328,6 +1508,7 @@ pollInterval = setInterval(() => {
 
 refreshAll();
 pollStatus();
+carregarConfig().then(atualizarAuto);
 </script>
 </body>
 </html>
