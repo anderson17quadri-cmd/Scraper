@@ -74,24 +74,40 @@ def _new_instaloader() -> instaloader.Instaloader:
     )
 
 
-def _session_login(L: instaloader.Instaloader, sessionid: str, username_hint: str = "") -> str:
-    """Loga reaproveitando o cookie sessionid copiado de um navegador --
-    mesma credencial usada pelo motor instagrapi na aba "Sessao" do login.
+def _parse_cookies(raw: str) -> dict:
+    """Aceita colar so o valor do sessionid OU a string de cookies inteira
+    copiada do navegador (formato "nome=valor; nome2=valor2", que e o que
+    uma extensao tipo Cookie-Editor exporta como "Header String"). Uma
+    string com so o sessionid vira {"sessionid": <valor>}."""
+    raw = raw.strip()
+    if "=" not in raw:
+        return {"sessionid": raw}
+    cookies = {}
+    for part in raw.split(";"):
+        part = part.strip()
+        if "=" in part:
+            k, v = part.split("=", 1)
+            cookies[k.strip()] = v.strip()
+    cookies.setdefault("sessionid", raw)
+    return cookies
+
+
+def _session_login(L: instaloader.Instaloader, raw_session: str) -> str:
+    """Importa uma sessao autenticada do MESMO jeito que o proprio projeto
+    Instaloader recomenda (e o CLI oficial faz com --load-cookies): atualiza
+    os cookies da sessao anonima padrao (update_cookies) em vez de trocar a
+    sessao inteira, e confirma com test_login().
+
+    So o sessionid (como o motor instagrapi usa) costuma bastar, mas o
+    Instagram tambem pode checar outros cookies (csrftoken, ds_user_id,
+    mid...). Por isso aceita tanto colar so o sessionid quanto a string de
+    cookies inteira -- quanto mais completa, mais confiavel.
 
     Evita o L.login(usuario, senha), que o Instagram reconhece facilmente
-    como script/bot e costuma responder com checkpoint de seguranca. Como
-    o sessionid vem de um login ja verificado (feito num navegador de
-    verdade), esse caminho tem bem menos chance de cair em checkpoint.
-
-    O site do Instagram exige um cookie csrftoken valido em toda
-    requisicao logada; pegamos um fazendo uma visita anonima antes de
-    aplicar o sessionid, do jeito que um navegador faria. Nao precisa
-    saber o usuario de antemao -- test_login() descobre o usuario de
-    verdade direto pelo sessionid, do jeito que login_by_sessionid() do
-    motor instagrapi ja faz. Devolve o usuario descoberto."""
-    resp = L.context._session.get("https://www.instagram.com/", timeout=15)
-    csrftoken = resp.cookies.get("csrftoken") or L.context._session.cookies.get("csrftoken")
-    L.context.load_session(username_hint, {"sessionid": sessionid, "csrftoken": csrftoken or ""})
+    como script/bot e costuma responder com checkpoint de seguranca. Devolve
+    o usuario de verdade (descoberto pelo test_login, nao precisa saber
+    de antemao)."""
+    L.context.update_cookies(_parse_cookies(raw_session))
     real_username = L.context.test_login()
     if not real_username:
         raise LoginRequiredException("Sessao invalida ou expirada (Instaloader)")
@@ -125,7 +141,7 @@ def login_iloader_account(account: dict, session_file: str) -> instaloader.Insta
             pass
 
     if sessionid:
-        _session_login(L, sessionid, username)
+        _session_login(L, sessionid)
         os.makedirs(os.path.dirname(session_file) or ".", exist_ok=True)
         L.save_session_to_file(session_file)
         return L

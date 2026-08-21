@@ -575,13 +575,17 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
           1. Faça login no instagram.com pelo Chrome/Firefox do PC.<br>
           2. Aperte F12 &rarr; aba "Aplicativo"/"Application" &rarr; Cookies &rarr; instagram.com.<br>
           3. Ache <code>sessionid</code> e copie o valor.<br>
-          4. Mande esse valor pro celular (mensagem pra voce mesmo, notas, etc) e cole abaixo.
+          4. Mande esse valor pro celular (mensagem pra voce mesmo, notas, etc) e cole abaixo.<br><br>
+          <strong>Motor Instaloader (mais confiável):</strong> em vez do valor do <code>sessionid</code>,
+          no Cookie-Editor toque em "Export" &rarr; "Header String" e cole o texto inteiro
+          (vários cookies juntos) no campo abaixo. O Instagram confere outros cookies
+          além do sessionid, então quanto mais completo, menor a chance de dar erro de sessão.
         </div>
       </details>
       <button class="btn btn-ghost btn-full" style="margin:10px 0;" onclick="window.open('https://www.instagram.com/accounts/login/','_blank')">
         <svg class="icon"><use href="#i-globe"/></svg> Abrir Instagram para fazer login
       </button>
-      <input type="text" id="login-sessionid" placeholder="Cole o sessionid aqui" autocomplete="off">
+      <input type="text" id="login-sessionid" placeholder="Cole o sessionid (ou os cookies inteiros)" autocomplete="off">
       <button class="btn btn-primary btn-full btn-lg" onclick="doSessionLogin()" id="btn-session-login">
         Entrar com sessão
       </button>
@@ -727,7 +731,7 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
         <button class="btn btn-primary" onclick="addAccount()">Add</button>
       </div>
       <div class="input-row" style="margin-bottom:10px;" id="new-acc-session-row">
-        <input class="input" id="new-acc-sessionid" placeholder="Cole o sessionid aqui (copiado do navegador)...">
+        <input class="input" id="new-acc-sessionid" placeholder="Cole o sessionid (ou os cookies inteiros, mais confiável p/ Instaloader)...">
       </div>
       <div class="input-row" style="margin-bottom:10px;">
         <select class="input" id="new-acc-engine">
