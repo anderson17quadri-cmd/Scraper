@@ -865,6 +865,84 @@ def api_preview_more():
         "has_more": bool(end_cursor),
     })
 
+@app.route("/api/preview-url", methods=["POST"])
+def api_preview_url():
+    """Preview de um post especifico a partir do link colado, em vez de
+    buscar o perfil inteiro. Aceita links de post, reel e tv."""
+    data = request.get_json() or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"ok": False, "msg": "Cole o link do post"})
+    if "instagram.com" not in url:
+        return jsonify({"ok": False, "msg": "Isso nao parece um link do Instagram"})
+
+    try:
+        engine, cl = _get_client(data.get("account_index"))
+    except Exception as e:
+        return jsonify({"ok": False, "msg": _translate_any_error(e)})
+
+    try:
+        if engine == "instaloader":
+            m = re.search(r"instagram\.com/(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)", url)
+            if not m:
+                return jsonify({"ok": False, "msg": "Nao consegui ler o codigo do post nesse link"})
+            post = instaloader.Post.from_shortcode(cl.context, m.group(1))
+            alvo = post.owner_username
+            itens, item_dict = [post], _iloader_preview_item(post, is_downloaded)
+        else:
+            pk = cl.media_pk_from_url(url)
+            media = cl.media_info(pk)
+            alvo = media.user.username
+            itens, item_dict = [media], _media_preview_item(media)
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Erro ao abrir o link: {_translate_any_error(e)}"})
+
+    cache_key = f"url:{url}"
+    preview_cache[cache_key] = {
+        "cl": cl, "engine": engine, "medias": itens, "kind": "post",
+        "target": alvo, "label": f"@{alvo} (link)",
+        "folder": f"{DOWNLOADS_DIR}/{alvo}",
+    }
+    return jsonify({"ok": True, "items": [item_dict], "cache_key": cache_key,
+                    "target": alvo, "has_more": False})
+
+@app.route("/api/reels", methods=["POST"])
+def api_reels():
+    """Reels de um perfil. O feed normal ja traz alguns, mas o Instagram
+    tem um endpoint dedicado que costuma trazer mais/melhor."""
+    data = request.get_json() or {}
+    target_username = (data.get("target_username") or "").strip().lstrip("@")
+    if not target_username:
+        return jsonify({"ok": False, "msg": "Informe o perfil alvo"})
+
+    try:
+        engine, cl = _get_client(data.get("account_index"))
+    except Exception as e:
+        return jsonify({"ok": False, "msg": _translate_any_error(e)})
+
+    cache_key = f"{target_username}:reels"
+    base = {"cl": cl, "engine": engine, "kind": "post", "target": target_username,
+            "label": f"@{target_username} (reels)",
+            "folder": f"{DOWNLOADS_DIR}/{target_username}/reels"}
+
+    try:
+        if engine == "instaloader":
+            perfil = instaloader.Profile.from_username(cl.context, target_username)
+            # o Instaloader nao tem endpoint so de reels: filtra os videos do feed
+            itens = [x for x in itertools.islice(perfil.get_posts(), 60) if x.is_video]
+            preview_cache[cache_key] = {**base, "medias": itens}
+            preview_items = [_iloader_preview_item(x, is_downloaded) for x in itens]
+        else:
+            uid = cl.user_id_from_username(target_username)
+            itens = cl.user_clips(uid, amount=PREVIEW_PAGE_SIZE)
+            preview_cache[cache_key] = {**base, "medias": list(itens)}
+            preview_items = [_media_preview_item(x) for x in itens]
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Erro ao buscar reels de @{target_username}: {_translate_any_error(e)}"})
+
+    msg = None if preview_items else "Nenhum reel encontrado nesse perfil"
+    return jsonify({"ok": True, "items": preview_items, "cache_key": cache_key, "msg": msg})
+
 @app.route("/api/stories", methods=["POST"])
 def api_stories():
     data = request.get_json() or {}

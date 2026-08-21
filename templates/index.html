@@ -386,6 +386,14 @@ select.input { appearance:none; cursor:pointer;
 .empty .icon { font-size:1.8rem; margin-bottom:10px; opacity:.55; display:block; }
 .empty p { font-size:0.83rem; }
 
+.seg-toggle { display:flex; gap:4px; margin-bottom:10px; padding:3px;
+  background:var(--bg); border:1px solid var(--border); border-radius:10px; }
+.seg-btn { flex:1; padding:7px 4px; border:none; background:transparent; border-radius:7px;
+  color:var(--muted); font-size:0.76rem; font-weight:600; cursor:pointer;
+  font-family:inherit; transition:all var(--transition); }
+.seg-btn:hover { background:rgba(255,255,255,.05); }
+.seg-btn.active { background:rgba(255,255,255,.09); color:var(--text); }
+
 /* ─── AJUSTES ───────────────────────────────────────────── */
 .field { margin-bottom:18px; }
 .field:last-child { margin-bottom:0; }
@@ -551,13 +559,22 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
         <select class="input" id="preview-account"><option value="">Automática</option></select>
         <button class="btn btn-ghost btn-xs" onclick="showLogin()" style="flex-shrink:0;"><svg class="icon"><use href="#i-plus"/></svg> Conta</button>
       </div>
-      <div class="input-row">
+      <div class="seg-toggle">
+        <button class="seg-btn active" id="seg-perfil" onclick="setModoBusca('perfil')">Por perfil</button>
+        <button class="seg-btn" id="seg-link" onclick="setModoBusca('link')">Por link</button>
+      </div>
+      <div class="input-row" id="busca-perfil">
         <input class="input" id="preview-target" placeholder="Perfil do Instagram (sem @)" onkeydown="if(event.key==='Enter')searchProfile()">
         <button class="btn btn-primary" onclick="searchProfile()" id="btn-preview-load">Buscar</button>
+      </div>
+      <div class="input-row" id="busca-link" hidden>
+        <input class="input" id="preview-url" placeholder="Cole o link do post/reel" onkeydown="if(event.key==='Enter')buscarPorLink()">
+        <button class="btn btn-primary" onclick="buscarPorLink()" id="btn-url-load">Abrir</button>
       </div>
 
       <div id="preview-tabs" class="preview-tabs" style="margin-top:12px;" hidden>
         <button class="btn btn-ghost btn-xs preview-tab active" data-mode="posts" onclick="switchPreviewMode('posts')"><svg class="icon"><use href="#i-image"/></svg> Posts</button>
+        <button class="btn btn-ghost btn-xs preview-tab" data-mode="reels" onclick="switchPreviewMode('reels')"><svg class="icon"><use href="#i-video"/></svg> Reels</button>
         <button class="btn btn-ghost btn-xs preview-tab" data-mode="stories" onclick="switchPreviewMode('stories')"><svg class="icon"><use href="#i-clock"/></svg> Stories</button>
         <button class="btn btn-ghost btn-xs preview-tab" data-mode="highlights" onclick="switchPreviewMode('highlights')"><svg class="icon"><use href="#i-star"/></svg> Destaques</button>
       </div>
@@ -1037,6 +1054,61 @@ function resetPreviewGrid() {
   $('preview-zip').hidden = true;
 }
 
+function setModoBusca(modo) {
+  const porLink = modo === 'link';
+  $('seg-perfil').classList.toggle('active', !porLink);
+  $('seg-link').classList.toggle('active', porLink);
+  $('busca-perfil').hidden = porLink;
+  $('busca-link').hidden = !porLink;
+  // as abas Posts/Reels/Stories/Destaques so fazem sentido buscando por perfil
+  $('preview-tabs').hidden = porLink || !previewTarget;
+  (porLink ? $('preview-url') : $('preview-target')).focus();
+}
+
+async function buscarPorLink() {
+  const url = $('preview-url').value.trim();
+  if (!url) return toast('Cole o link do post', 'err');
+
+  resetPreviewGrid();
+  $('preview-tabs').hidden = true;
+  $('btn-url-load').disabled = true;
+  $('preview-grid').innerHTML = '<div class="empty"><p>Abrindo link...</p></div>';
+
+  const body = {url};
+  const accVal = $('preview-account').value;
+  if (accVal !== '') body.account_index = parseInt(accVal);
+
+  const r = await api('/api/preview-url', {method:'POST', body:JSON.stringify(body)});
+  $('btn-url-load').disabled = false;
+  if (!r.ok) {
+    $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    return toast(r.msg, 'err');
+  }
+  previewCacheKey = r.cache_key;
+  previewItems = r.items;
+  previewSelected = new Set(previewItems.filter(i => !i.already).map(i => i.id));
+  renderPreview();
+  $('preview-actions').hidden = false;
+  toast('Post de @' + r.target + ' encontrado');
+}
+
+async function loadReelsPreview() {
+  resetPreviewGrid();
+  $('preview-grid').innerHTML = '<div class="empty"><p>Buscando reels...</p></div>';
+  const r = await api('/api/reels', {method:'POST', body:JSON.stringify(previewAccountBody())});
+  if (!r.ok) {
+    $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    return toast(r.msg, 'err');
+  }
+  previewCacheKey = r.cache_key;
+  previewItems = r.items;
+  previewSelected = new Set(previewItems.filter(i => !i.already).map(i => i.id));
+  renderPreview();
+  $('preview-actions').hidden = previewItems.length === 0;
+  $('preview-type-filter').hidden = previewItems.length === 0;
+  toast(r.msg || `${previewItems.length} reels encontrados`);
+}
+
 async function searchProfile() {
   const t = $('preview-target').value.trim().replace(/^@/, '');
   if (!t) return toast('Digite o perfil do Instagram', 'err');
@@ -1058,6 +1130,7 @@ async function switchPreviewMode(mode) {
   $('highlight-back').hidden = true;
   $('highlights-list').hidden = true;
   if (mode === 'posts') await loadPostsPreview();
+  else if (mode === 'reels') await loadReelsPreview();
   else if (mode === 'stories') await loadStoriesPreview();
   else if (mode === 'highlights') await loadHighlightsList();
 }
