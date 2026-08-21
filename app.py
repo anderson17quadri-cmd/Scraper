@@ -1180,6 +1180,51 @@ def api_config():
     _sync_auto_mode()
     return jsonify({"ok": True, "config": cfg})
 
+# ─── INTEGRACAO COM O WINDOWS ────────────────────────────────────────────────
+_STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_STARTUP_NAME = "IGScraperPro"
+
+def _startup_supported():
+    """So faz sentido no Windows e rodando como aplicativo empacotado --
+    apontar o registro pro python.exe do desenvolvimento nao ajudaria."""
+    return sys.platform == "win32" and getattr(sys, "frozen", False)
+
+def startup_enabled():
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_KEY) as k:
+            winreg.QueryValueEx(k, _STARTUP_NAME)
+            return True
+    except Exception:
+        return False
+
+@app.route("/api/startup", methods=["GET", "POST"])
+def api_startup():
+    if request.method == "GET":
+        return jsonify({"supported": _startup_supported(), "enabled": startup_enabled()})
+
+    if not _startup_supported():
+        return jsonify({"ok": False, "msg": "So funciona no aplicativo instalado no Windows"})
+
+    ligar = bool((request.get_json() or {}).get("enabled"))
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_KEY, 0, winreg.KEY_ALL_ACCESS) as k:
+            if ligar:
+                winreg.SetValueEx(k, _STARTUP_NAME, 0, winreg.REG_SZ, f'"{sys.executable}"')
+            else:
+                try:
+                    winreg.DeleteValue(k, _STARTUP_NAME)
+                except FileNotFoundError:
+                    pass
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Nao consegui alterar: {e}"})
+
+    return jsonify({"ok": True, "enabled": ligar,
+                    "msg": "Vai abrir junto com o Windows" if ligar else "Nao abre mais sozinho"})
+
 @app.route("/api/open-folder", methods=["POST"])
 def api_open_folder():
     """Abre a pasta de downloads no gerenciador de arquivos do sistema.

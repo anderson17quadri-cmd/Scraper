@@ -731,11 +731,26 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
       <div id="today-usage" class="usage-box"></div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin-bottom:14px;">
       <div class="card-header"><span class="card-title">Arquivos</span></div>
       <button class="btn btn-ghost btn-full" onclick="abrirPasta()">
         <svg class="icon"><use href="#i-folder"/></svg> Abrir pasta de downloads
       </button>
+    </div>
+
+    <div class="card" id="card-windows" hidden>
+      <div class="card-header"><span class="card-title">Windows</span></div>
+      <label class="switch-row">
+        <span>
+          <strong>Abrir junto com o Windows</strong>
+          <small>Inicia sozinho ao ligar o computador, útil com o download automático</small>
+        </span>
+        <input type="checkbox" id="cfg-startup" onchange="salvarStartup()">
+      </label>
+      <p class="card-sub" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+        Ao fechar a janela, o app continua rodando no ícone perto do relógio.
+        Para sair de vez, clique nesse ícone com o botão direito e escolha Sair.
+      </p>
     </div>
   </section>
 
@@ -1597,6 +1612,24 @@ async function atualizarAuto() {
   }
 }
 
+async function carregarStartup() {
+  const r = await api('/api/startup');
+  // a opcao so aparece no app instalado no Windows -- no navegador/Termux
+  // nao ha o que configurar
+  $('card-windows').hidden = !(r && r.supported);
+  if (r && r.supported) $('cfg-startup').checked = !!r.enabled;
+}
+
+async function salvarStartup() {
+  const r = await api('/api/startup', {method:'POST',
+    body: JSON.stringify({enabled: $('cfg-startup').checked})});
+  if (!r.ok) {
+    $('cfg-startup').checked = !$('cfg-startup').checked;  // desfaz na tela
+    return toast(r.msg || 'Nao consegui alterar', 'err');
+  }
+  toast(r.msg);
+}
+
 async function abrirPasta() {
   const r = await api('/api/open-folder', {method:'POST'});
   toast(r.msg, r.ok ? 'ok' : 'err');
@@ -1619,6 +1652,7 @@ pollInterval = setInterval(() => {
 refreshAll();
 pollStatus();
 carregarConfig().then(atualizarAuto);
+carregarStartup();
 </script>
 </body>
 </html>

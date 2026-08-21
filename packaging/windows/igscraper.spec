@@ -16,6 +16,8 @@ a = Analysis(
     binaries=[],
     datas=[
         (os.path.join(ROOT, 'templates'), 'templates'),
+        # icone da bandeja precisa estar dentro do bundle
+        (os.path.join(ROOT, 'packaging', 'windows', 'icon.ico'), '.'),
     ],
     hiddenimports=[
         'instagrapi',
@@ -26,6 +28,8 @@ a = Analysis(
         'engineio.async_drivers.threading',
         'instaloader',
         'instaloader.exceptions',
+        'pystray',
+        'pystray._win32',
     ],
     hookspath=[],
     hooksconfig={},

@@ -53,6 +53,41 @@ def _wait_server_ready(port, timeout=10):
     return False
 
 
+def _icone_bandeja():
+    """Icone da bandeja. Usa o .ico do app quando empacotado; se nao
+    achar, desenha um quadrado simples pra nao ficar sem icone."""
+    from PIL import Image, ImageDraw
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    for caminho in (os.path.join(base, "icon.ico"),
+                    os.path.join(base, "packaging", "windows", "icon.ico")):
+        if os.path.exists(caminho):
+            try:
+                return Image.open(caminho)
+            except Exception:
+                pass
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([4, 4, 60, 60], radius=14, fill=(99, 102, 241, 255))
+    d.ellipse([22, 22, 42, 42], fill=(255, 255, 255, 255))
+    return img
+
+
+def _vigia_downloads(notificar):
+    """Avisa quando um download termina. Observa a transicao de
+    'rodando' para 'parado' no estado compartilhado do app."""
+    estado = flask_app_module.scrape_state
+    rodando_antes = False
+    while True:
+        time.sleep(1.5)
+        rodando = bool(estado.get("running"))
+        if rodando_antes and not rodando:
+            try:
+                notificar("IG-Scraper Pro", estado.get("message") or "Download concluido")
+            except Exception:
+                pass  # notificacao e um extra: nunca deve derrubar o app
+        rodando_antes = rodando
+
+
 def main():
     import webview
 
@@ -71,12 +106,60 @@ def main():
     threading.Thread(target=run_server, daemon=True).start()
     _wait_server_ready(port)
 
-    webview.create_window(
+    janela = webview.create_window(
         "IG-Scraper Pro",
         f"http://127.0.0.1:{port}/",
         width=480, height=880, min_size=(380, 640),
     )
+
+    # Bandeja do sistema: fechar a janela esconde o app em vez de encerrar,
+    # pra o agendamento automatico continuar rodando em segundo plano.
+    # E um extra -- se o pystray nao estiver disponivel, o app funciona
+    # normalmente, so sem bandeja.
+    icone = None
+    try:
+        import pystray
+
+        def mostrar(*_):
+            try:
+                janela.show()
+            except Exception:
+                pass
+
+        def sair(*_):
+            if icone:
+                icone.stop()
+            try:
+                janela.destroy()
+            except Exception:
+                pass
+            os._exit(0)
+
+        icone = pystray.Icon(
+            "IGScraperPro", _icone_bandeja(), "IG-Scraper Pro",
+            menu=pystray.Menu(
+                pystray.MenuItem("Abrir", mostrar, default=True),
+                pystray.MenuItem("Sair", sair),
+            ),
+        )
+        threading.Thread(target=icone.run, daemon=True).start()
+
+        def ao_fechar():
+            janela.hide()
+            return False  # cancela o fechamento: so esconde
+
+        janela.events.closing += ao_fechar
+
+        def notificar(titulo, msg):
+            icone.notify(msg, titulo)
+
+        threading.Thread(target=_vigia_downloads, args=(notificar,), daemon=True).start()
+    except Exception:
+        pass
+
     webview.start()
+    if icone:
+        icone.stop()
 
 
 if __name__ == "__main__":
