@@ -135,10 +135,15 @@ def login_iloader_account(account: dict, session_file: str) -> instaloader.Insta
     if os.path.exists(session_file):
         try:
             L.load_session_from_file(username, session_file)
-            if L.context.is_logged_in:
+            # ter o arquivo de sessao nao quer dizer que ela ainda esta
+            # viva no Instagram -- test_login() confirma de verdade antes
+            # de confiar nela, senao uma sessao morta so da erro depois,
+            # numa busca, em vez de relogar sozinho aqui
+            if L.context.is_logged_in and L.context.test_login():
                 return L
         except Exception:
             pass
+        L = _new_instaloader()
 
     if sessionid:
         _session_login(L, sessionid)

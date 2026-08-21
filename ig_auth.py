@@ -86,10 +86,16 @@ def login_account(account: dict, session_file: str) -> Client:
     if os.path.exists(session_file):
         try:
             cl.load_settings(session_file)
+            if cl.user_id:
+                # ter os dados salvos no arquivo nao quer dizer que a sessao
+                # ainda esta viva no Instagram (o cookie pode ter expirado
+                # ou sido revogado) -- confirma com uma chamada leve antes
+                # de confiar nela, senao isso so aparece como erro depois,
+                # numa busca, em vez de relogar sozinho aqui
+                cl.account_info()
+                return cl
         except Exception:
-            pass
-        if cl.user_id:
-            return cl
+            cl = Client()
 
     if sessionid:
         cl.login_by_sessionid(sessionid)
