@@ -535,6 +535,7 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10"/><path d="M18 6h2"/><circle cx="16" cy="6" r="2"/><path d="M4 12h4"/><path d="M12 12h8"/><circle cx="10" cy="12" r="2"/><path d="M4 18h10"/><path d="M18 18h2"/><circle cx="16" cy="18" r="2"/></symbol>
   <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></symbol>
   <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8Z"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 2 18a1 1 0 0 0 1 1.5h18a1 1 0 0 0 1-1.5L13.7 3.9a1 1 0 0 0-1.7 0Z"/><path d="M12 9v4"/><path d="M12 16.5h.01"/></symbol>
 </defs>
 </svg>
 
@@ -725,6 +726,7 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
         <div class="speed-stats" id="speed-stats" hidden>
           <span class="speed-chip"><svg class="icon"><use href="#i-zap"/></svg>Agora: <b id="speed-now">--</b></span>
           <span class="speed-chip"><svg class="icon"><use href="#i-zap"/></svg>Média: <b id="speed-avg">--</b></span>
+          <span class="speed-chip" id="eta-chip" hidden><svg class="icon"><use href="#i-clock"/></svg><b id="eta-text">--</b></span>
         </div>
       </div>
       <div id="preview-zip" hidden style="margin-bottom:12px;"></div>
@@ -844,6 +846,19 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
     </div>
 
     <div class="card" style="margin-bottom:14px;">
+      <div class="card-header"><span class="card-title">Qualidade dos downloads</span></div>
+      <p class="card-sub" style="margin-bottom:14px;">
+        Economizar espaço baixa fotos e vídeos (de posts e reels) numa resolução
+        menor em vez da máxima disponível -- ocupa menos espaço e é mais rápido.
+        Carrosséis, stories e destaques sempre baixam na qualidade máxima.
+      </p>
+      <div class="seg-toggle" id="quality-toggle">
+        <button class="seg-btn" onclick="setQualidade('max')">Máxima qualidade</button>
+        <button class="seg-btn" onclick="setQualidade('eco')">Economizar espaço</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px;">
       <div class="card-header"><span class="card-title">Limites</span></div>
       <div class="field">
         <label>Posts por perfil no download automático <b id="lbl-posts">15</b></label>
@@ -940,6 +955,27 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
     </div>
   </section>
 
+  <!-- PAGINA: ERROS -->
+  <section class="page" id="page-erros">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Histórico de erros</span>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-ghost btn-xs" onclick="exportErrors()"><svg class="icon"><use href="#i-download"/></svg> Exportar</button>
+          <button class="btn btn-danger btn-xs" onclick="clearErrors()"><svg class="icon"><use href="#i-trash"/></svg> Limpar</button>
+        </div>
+      </div>
+      <p class="card-sub" style="margin-bottom:10px;">
+        Todos os erros que já aconteceram no app -- login, busca, download, tudo.
+        Fica salvo mesmo depois de fechar e reabrir.
+      </p>
+      <div class="input-row" style="margin-bottom:10px;">
+        <input class="input" id="errors-search" placeholder="Buscar por texto do erro..." oninput="loadErrors()">
+      </div>
+      <div class="scroll-list" id="errors-list" style="max-height:500px;">Carregando...</div>
+    </div>
+  </section>
+
 </div>
 
 <!-- NAVEGACAO INFERIOR -->
@@ -952,6 +988,9 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
   </button>
   <button class="nav-btn" data-page="biblioteca" onclick="showPage('biblioteca')">
     <span class="nav-icon"><svg class="icon"><use href="#i-library"/></svg></span><span class="nav-label">Biblioteca</span>
+  </button>
+  <button class="nav-btn" data-page="erros" onclick="showPage('erros')">
+    <span class="nav-icon"><svg class="icon"><use href="#i-alert"/></svg></span><span class="nav-label">Erros</span>
   </button>
   <button class="nav-btn" data-page="ajustes" onclick="showPage('ajustes')">
     <span class="nav-icon"><svg class="icon"><use href="#i-sliders"/></svg></span><span class="nav-label">Ajustes</span>
@@ -1011,6 +1050,7 @@ function showPage(name) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === name));
   window.scrollTo({top: 0, behavior: 'instant'});
   if (name === 'ajustes' || name === 'contas') atualizarAuto();
+  if (name === 'erros') loadErrors();
 }
 
 // ─── TOAST ───────────────────────────────────────────────────────────────────
@@ -1604,10 +1644,12 @@ function pollStatus() {
       $('header-status').textContent = s.current ? 'Scrapando '+s.current : s.message;
       $('header-badge').innerHTML = '<span class="status-dot pulse"></span> Scrapando...';
 
-      if (s.speed || s.speed_avg) {
+      if (s.speed || s.speed_avg || s.eta) {
         $('speed-stats').hidden = false;
         $('speed-now').textContent = s.speed || '--';
         $('speed-avg').textContent = s.speed_avg || '--';
+        $('eta-chip').hidden = !s.eta;
+        $('eta-text').textContent = s.eta || '--';
       } else {
         $('speed-stats').hidden = true;
       }
@@ -1837,6 +1879,42 @@ function renderArquivos(files) {
   $('all-files').innerHTML = fhtml;
 }
 
+// ─── HISTORICO DE ERROS ────────────────────────────────────────────────────
+let errosTimer = null;
+
+function loadErrors() {
+  clearTimeout(errosTimer);
+  errosTimer = setTimeout(async () => {
+    const q = $('errors-search').value.trim();
+    const r = await api('/api/errors' + (q ? ('?q=' + encodeURIComponent(q)) : ''));
+    if (!r || r.ok === false) return;
+    let html = '';
+    if (!r.errors || r.errors.length === 0) {
+      html = `<div class="empty"><p>${q ? 'Nada encontrado com esse filtro' : 'Nenhum erro registrado ainda -- bom sinal!'}</p></div>`;
+    }
+    r.errors.forEach(e => {
+      html += `<div class="list-item">
+        <div class="info">
+          <div class="name">${e.message}</div>
+          <div class="meta">${(e.occurred_at || '').replace('T', ' ').substring(0, 19)}</div>
+        </div>
+      </div>`;
+    });
+    $('errors-list').innerHTML = html;
+  }, 300);
+}
+
+function exportErrors() {
+  window.open('/api/errors/export', '_blank');
+}
+
+async function clearErrors() {
+  if (!confirm('Apagar todo o histórico de erros? Não dá pra desfazer.')) return;
+  await api('/api/errors/clear', {method: 'POST'});
+  toast('Histórico de erros limpo');
+  loadErrors();
+}
+
 // ─── AJUSTES / CONFIGURACOES ─────────────────────────────────────────────────
 let configCarregada = false;
 
@@ -1857,6 +1935,22 @@ async function carregarConfig() {
   $('lbl-limit').textContent = (c.max_downloads_per_day ? c.max_downloads_per_day : 'sem limite');
   configCarregada = true;
   marcarPresetAtivo(c.delay_min ?? 3, c.delay_max ?? 10);
+  selectedQuality = c.quality === 'eco' ? 'eco' : 'max';
+  marcarQualidadeAtiva();
+}
+
+let selectedQuality = 'max';
+
+function marcarQualidadeAtiva() {
+  document.querySelectorAll('#quality-toggle .seg-btn').forEach((b, i) => {
+    b.classList.toggle('active', (i === 0) === (selectedQuality === 'max'));
+  });
+}
+
+function setQualidade(q) {
+  selectedQuality = q;
+  marcarQualidadeAtiva();
+  salvarConfig();
 }
 
 // presets rapidos da velocidade: cada um so ajusta as pausas min/max
@@ -1902,6 +1996,7 @@ async function salvarConfig() {
     max_downloads_per_day: parseInt($('cfg-limit').value),
     auto_interval: parseInt($('cfg-auto-interval').value),
     auto_mode: auto,
+    quality: selectedQuality,
   };
   const r = await api('/api/config', {method:'POST', body:JSON.stringify(body)});
   if (!r.ok) return toast(r.msg || 'Erro ao salvar', 'err');

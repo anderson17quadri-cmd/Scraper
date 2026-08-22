@@ -7,7 +7,7 @@ python app.py  ->  http://localhost:5000
 import os, sys, json, time, threading, sqlite3, random, zipfile, re, itertools
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, Response
 from ig_auth import login_account, login_by_sessionid, translate_ig_error
 from ig_engine_iloader import (login_iloader_account, login_iloader_sessionid, translate_iloader_error,
                                post_preview_item as _iloader_preview_item,
@@ -52,8 +52,11 @@ def init_db():
         username TEXT, file TEXT, type TEXT, date TEXT, downloaded_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
     c.execute("""CREATE TABLE IF NOT EXISTS accounts_stats (
         username TEXT PRIMARY KEY, total_downloads INTEGER DEFAULT 0, last_use TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS error_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT, occurred_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_username ON downloads(username)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_downloaded_at ON downloads(downloaded_at)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_error_occurred_at ON error_log(occurred_at)")
     conn.commit()
     conn.close()
 
@@ -118,12 +121,12 @@ def init_files():
     if not os.path.exists(CONFIG_PATH):
         jsave(CONFIG_PATH, {"delay_min": 3, "delay_max": 10, "posts_per_profile": 15,
                             "auto_interval": 3600, "max_downloads_per_day": 500,
-                            "auto_mode": False})
+                            "auto_mode": False, "quality": "max"})
 
 def get_cfg():
     return jload(CONFIG_PATH, {"delay_min": 3, "delay_max": 10, "posts_per_profile": 15,
                                 "auto_interval": 3600, "max_downloads_per_day": 500,
-                                "auto_mode": False})
+                                "auto_mode": False, "quality": "max"})
 
 def upsert_account(username, password=None, sessionid=None, engine=None):
     accs = jload(ACCOUNTS_PATH)
@@ -148,7 +151,7 @@ def upsert_account(username, password=None, sessionid=None, engine=None):
 scrape_state = {"running": False, "connected": False, "current_account": "",
                 "message": "Pronto", "progress": 0, "total": 0, "current": "", "logs": [],
                 "stop_requested": False, "zip_url": None, "speed": "", "speed_avg": "",
-                "failed_count": 0}
+                "failed_count": 0, "started_at": None}
 
 # midias que falharam na ultima leva de downloads, agrupadas por
 # conta/alvo/pasta, pra dar pra tentar de novo so essas (ver /api/retry-failed)
@@ -310,6 +313,28 @@ def _add_log(msg, typ="info"):
     scrape_state["logs"].append({"time": datetime.now().strftime("%H:%M:%S"), "msg": msg, "type": typ})
     if len(scrape_state["logs"]) > 100:
         scrape_state["logs"] = scrape_state["logs"][-50:]
+    if typ == "error":
+        # o log da tela some quando a sessao acaba -- grava os erros no
+        # banco tambem, pra ter um historico que sobrevive a isso
+        try:
+            db_query("INSERT INTO error_log (message) VALUES (?)", (msg,), fetch=False)
+        except Exception:
+            pass
+
+@app.after_request
+def _log_error_responses(response):
+    """Grava no historico QUALQUER resposta de erro da API (nao so as do
+    fluxo de scraping, que ja passam por _add_log) -- pega tambem os erros
+    das rotas de busca/preview/login, que respondem {"ok": false, "msg":...}
+    direto sem passar pelo log. Um unico lugar cobre o app inteiro."""
+    try:
+        if response.is_json:
+            data = response.get_json(silent=True)
+            if isinstance(data, dict) and data.get("ok") is False and data.get("msg"):
+                db_query("INSERT INTO error_log (message) VALUES (?)", (str(data["msg"])[:500],), fetch=False)
+    except Exception:
+        pass
+    return response
 
 def _stopped():
     if scrape_state.get("stop_requested"):
@@ -318,19 +343,67 @@ def _stopped():
         return True
     return False
 
+def _pick_lower_res_url(candidates, target_width=720):
+    """candidates: lista de objetos/dicts com largura+url (candidatos de
+    resolucao que o Instagram oferece pra mesma midia). Escolhe o mais
+    proximo de target_width sem cortar demais -- pega a primeira igual
+    ou maior que o alvo, senao a maior disponivel mesmo."""
+    def w(c):
+        return (c.get("width") if isinstance(c, dict) else getattr(c, "width", 0)) or 0
+    def u(c):
+        return c.get("url") if isinstance(c, dict) else getattr(c, "url", None)
+    usable = [c for c in candidates if u(c)]
+    if not usable:
+        return None
+    usable.sort(key=w)
+    for c in usable:
+        if w(c) >= target_width:
+            return str(u(c))
+    return str(u(usable[-1]))
+
+def _eco_photo_url(m):
+    """Resolucao menor de uma foto, quando disponivel (modo "Economizar
+    espaco" de Ajustes) -- os candidatos ja vem junto com a midia, sem
+    precisar de requisicao extra."""
+    cands = getattr(getattr(m, "image_versions2", None), "candidates", None)
+    if cands:
+        url = _pick_lower_res_url(cands)
+        if url:
+            return url
+    return m.thumbnail_url
+
+def _eco_video_url(cl, m):
+    """Resolucao menor de um video, quando disponivel. O objeto Media ja
+    processado pelo instagrapi so guarda a URL da melhor qualidade -- os
+    candidatos menores so vem numa chamada extra (so faz essa chamada a
+    mais quando "Economizar espaco" esta ativo, e cai pra qualidade
+    maxima de qualquer jeito se a chamada falhar por algum motivo)."""
+    try:
+        cl.private_request(f"media/{m.pk}/info/")
+        raw = (cl.last_json or {}).get("items", [{}])[0]
+        url = _pick_lower_res_url(raw.get("video_versions") or [])
+        if url:
+            return url
+    except Exception:
+        pass
+    return m.video_url
+
 def _download_one(cl, tu, m, folder):
-    """Baixa uma midia (foto/video/carrossel) na maior resolucao que o
-    instagrapi tiver disponivel. Retorna a lista de caminhos salvos."""
+    """Baixa uma midia (foto/video/carrossel) na resolucao configurada
+    em Ajustes (maxima por padrao). Retorna a lista de caminhos salvos."""
     date_str = m.taken_at.strftime("%Y%m%d_%H%M%S")
+    eco = get_cfg().get("quality") == "eco"
     saved_paths = []
     try:
         if m.media_type == 1:
-            path = _timed_download(cl.photo_download_by_url, m.thumbnail_url, filename=f"{tu}_{date_str}", folder=folder)
+            url = _eco_photo_url(m) if eco else m.thumbnail_url
+            path = _timed_download(cl.photo_download_by_url, url, filename=f"{tu}_{date_str}", folder=folder)
             add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': 'photo', 'date': m.taken_at.isoformat()})
             _add_log(f"Download: {os.path.basename(path)}", "success")
             saved_paths.append(str(path))
         elif m.media_type == 2:
-            path = _timed_download(cl.video_download_by_url, m.video_url, filename=f"{tu}_{date_str}", folder=folder)
+            url = _eco_video_url(cl, m) if eco else m.video_url
+            path = _timed_download(cl.video_download_by_url, url, filename=f"{tu}_{date_str}", folder=folder)
             add_download({'media_id': m.id, 'username': tu, 'file': os.path.basename(path), 'type': 'video', 'date': m.taken_at.isoformat()})
             _add_log(f"Download: {os.path.basename(path)}", "success")
             saved_paths.append(str(path))
@@ -580,7 +653,8 @@ def _do_scrape(account_index=None, target_index=None):
     last_failed_groups.clear()
     scrape_state.update(running=True, connected=False, current_account="",
                         message="Ligando motor...", progress=0, total=0, current="", logs=[],
-                        stop_requested=False, zip_url=None, speed="", speed_avg="", failed_count=0)
+                        stop_requested=False, zip_url=None, speed="", speed_avg="", failed_count=0,
+                        started_at=time.time())
 
     try:
         cfg = get_cfg()
@@ -685,8 +759,9 @@ def _do_scrape(account_index=None, target_index=None):
                     scrape_state["total"] = len(medias)
                     _add_log(f"@{tu}: {len(medias)} midias encontradas")
 
+                    _eco = cfg.get("quality") == "eco"
                     iloader_downloader = lambda cl, tu, m, folder: _iloader_download_post(
-                        m, tu, folder, add_download, _add_log, _record_speed)
+                        m, tu, folder, add_download, _add_log, _record_speed, eco=_eco)
                     _saved, downloaded_count, failed = _run_downloads(medias, iloader_downloader, cl, tu, folder, _item_id)
                     _register_failed(cl, tu, folder, iloader_downloader, failed, _item_id)
                 else:
@@ -1398,7 +1473,8 @@ def _do_selected_download(cache, medias):
 
     if engine == "instaloader":
         iloader_fn = _iloader_download_post if kind == "post" else _iloader_download_story
-        downloader = lambda cl, tu, m, folder: iloader_fn(m, tu, folder, add_download, _add_log, _record_speed)
+        _eco = get_cfg().get("quality") == "eco"
+        downloader = lambda cl, tu, m, folder: iloader_fn(m, tu, folder, add_download, _add_log, _record_speed, eco=_eco)
         account_label = getattr(cl.context, "username", "") or ""
     else:
         downloader = _download_one if kind == "post" else _download_story_item
@@ -1410,7 +1486,8 @@ def _do_selected_download(cache, medias):
     scrape_state.update(running=True, connected=True, current_account=account_label,
                         message=f"Baixando selecionados de {label}...", progress=0,
                         total=len(medias), current=label, logs=[], stop_requested=False,
-                        zip_url=None, speed="", speed_avg="", failed_count=0)
+                        zip_url=None, speed="", speed_avg="", failed_count=0,
+                        started_at=time.time())
     os.makedirs(folder, exist_ok=True)
     try:
         all_saved, _count, failed = _run_downloads(medias, downloader, cl, tu, folder, _item_id)
@@ -1457,7 +1534,7 @@ def _do_download_all(target_username, account_index):
     scrape_state.update(running=True, connected=False, current_account="",
                         message=f"Conectando pra baixar tudo de @{tu}...", progress=0, total=0,
                         current=f"@{tu}", logs=[], stop_requested=False, zip_url=None,
-                        speed="", speed_avg="", failed_count=0)
+                        speed="", speed_avg="", failed_count=0, started_at=time.time())
     all_saved = []  # lista de (caminho, subpasta) pro zip final
     try:
         try:
@@ -1488,10 +1565,11 @@ def _do_download_all(target_username, account_index):
         scrape_state["message"] = f"Buscando posts de @{tu}..."
         _add_log(f"Buscando posts de @{tu}...")
         try:
+            _eco = cfg.get("quality") == "eco"
             if engine == "instaloader":
                 profile = instaloader.Profile.from_username(cl.context, tu)
                 posts = list(itertools.islice(profile.get_posts(), cfg.get("posts_per_profile", 15)))
-                downloader = lambda cl, tu, m, folder: _iloader_download_post(m, tu, folder, add_download, _add_log, _record_speed)
+                downloader = lambda cl, tu, m, folder: _iloader_download_post(m, tu, folder, add_download, _add_log, _record_speed, eco=_eco)
             else:
                 uid = cl.user_id_from_username(tu)
                 posts = cl.user_medias(uid, amount=cfg.get("posts_per_profile", 15))
@@ -1505,10 +1583,11 @@ def _do_download_all(target_username, account_index):
             scrape_state["message"] = f"Buscando reels de @{tu}..."
             _add_log(f"Buscando reels de @{tu}...")
             try:
+                _eco = cfg.get("quality") == "eco"
                 if engine == "instaloader":
                     profile = instaloader.Profile.from_username(cl.context, tu)
                     reels = [x for x in itertools.islice(profile.get_posts(), 60) if x.is_video]
-                    downloader = lambda cl, tu, m, folder: _iloader_download_post(m, tu, folder, add_download, _add_log, _record_speed)
+                    downloader = lambda cl, tu, m, folder: _iloader_download_post(m, tu, folder, add_download, _add_log, _record_speed, eco=_eco)
                 else:
                     uid = cl.user_id_from_username(tu)
                     reels = list(cl.user_clips(uid, amount=PREVIEW_PAGE_SIZE))
@@ -1607,7 +1686,8 @@ def _do_retry_failed():
     scrape_state.update(running=True, connected=True, current_account="",
                         message="Tentando de novo os itens com erro...", progress=0,
                         total=total, current="", logs=[], stop_requested=False,
-                        zip_url=None, speed="", speed_avg="", failed_count=0)
+                        zip_url=None, speed="", speed_avg="", failed_count=0,
+                        started_at=time.time())
     all_saved = []
     try:
         offset = 0
@@ -1643,13 +1723,65 @@ def api_stop():
     scrape_state["message"] = "Parando..."
     return jsonify({"ok": True, "msg": "Interrompendo scraping..."})
 
+def _eta_string():
+    """Tempo restante estimado, com base no ritmo real desde o inicio da
+    operacao atual (inclui as pausas entre downloads, nao so o tempo de
+    transferencia -- por isso e mais fiel do que so olhar a velocidade)."""
+    progress = scrape_state.get("progress", 0)
+    total = scrape_state.get("total", 0)
+    started_at = scrape_state.get("started_at")
+    if not started_at or progress <= 0 or total <= 0 or progress >= total:
+        return ""
+    elapsed = time.time() - started_at
+    remaining = (elapsed / progress) * (total - progress)
+    if remaining < 60:
+        return f"~{int(remaining)}s restantes"
+    if remaining < 3600:
+        return f"~{round(remaining / 60)} min restantes"
+    h, m = int(remaining // 3600), int((remaining % 3600) // 60)
+    return f"~{h}h{m:02d}min restantes"
+
 @app.route("/api/status")
 def api_status():
-    return jsonify(scrape_state)
+    s = dict(scrape_state)
+    s["eta"] = _eta_string() if s.get("running") else ""
+    return jsonify(s)
 
 @app.route("/api/stats")
 def api_stats():
     return jsonify(get_stats())
+
+@app.route("/api/errors")
+def api_errors():
+    q = (request.args.get("q") or "").strip()
+    limit = min(int(request.args.get("limit", 200) or 200), 1000)
+    if q:
+        rows = db_query(
+            "SELECT id, message, occurred_at FROM error_log WHERE message LIKE ? "
+            "ORDER BY id DESC LIMIT ?", (f"%{q}%", limit))
+    else:
+        rows = db_query("SELECT id, message, occurred_at FROM error_log ORDER BY id DESC LIMIT ?", (limit,))
+    total = db_query("SELECT COUNT(*) FROM error_log")[0][0]
+    return jsonify({"ok": True, "total": total,
+                    "errors": [{"id": r[0], "message": r[1], "occurred_at": r[2]} for r in rows]})
+
+@app.route("/api/errors/export")
+def api_errors_export():
+    rows = db_query("SELECT occurred_at, message FROM error_log ORDER BY id DESC")
+    linhas = ["data_hora,mensagem"]
+    for occurred_at, message in rows:
+        msg_csv = '"' + (message or "").replace('"', '""') + '"'
+        linhas.append(f"{occurred_at},{msg_csv}")
+    csv_text = "\n".join(linhas)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Response(csv_text, mimetype="text/csv", headers={
+        "Content-Disposition": f"attachment; filename=erros_igscraper_{ts}.csv"
+    })
+
+@app.route("/api/errors/clear", methods=["POST"])
+def api_errors_clear():
+    db_query("DELETE FROM error_log", fetch=False)
+    return jsonify({"ok": True})
 
 @app.route("/api/config", methods=["GET", "POST"])
 def api_config():
@@ -1671,6 +1803,8 @@ def api_config():
                 return jsonify({"ok": False, "msg": f"Valor invalido em {chave}"})
     if "auto_mode" in data:
         cfg["auto_mode"] = bool(data["auto_mode"])
+    if "quality" in data and data["quality"] in ("max", "eco"):
+        cfg["quality"] = data["quality"]
     if cfg.get("delay_max", 10) < cfg.get("delay_min", 3):
         cfg["delay_max"] = cfg["delay_min"]
 

@@ -191,13 +191,44 @@ def post_preview_item(post, is_downloaded_fn) -> dict:
     }
 
 
-def download_post(post, tu, folder, add_download_fn, log_fn, speed_fn=None):
-    """Baixa um post (foto/video/carrossel) via Instaloader, na maior
-    resolucao disponivel. Retorna a lista de caminhos salvos."""
+def _pick_lower_res(candidates, target_width=720):
+    usable = [c for c in candidates if c.get("url")]
+    if not usable:
+        return None
+    usable.sort(key=lambda c: c.get("width", 0))
+    for c in usable:
+        if c.get("width", 0) >= target_width:
+            return c["url"]
+    return usable[-1]["url"]
+
+
+def _eco_url(post, is_video):
+    """Resolucao menor de um post, quando disponivel, sem chamada extra
+    (os candidatos vem no iphone_struct que o Instaloader ja buscou
+    junto com o post, quando logado). Se nao tiver, devolve None e quem
+    chamou continua usando a qualidade maxima normalmente."""
+    try:
+        struct = post._iphone_struct
+    except Exception:
+        return None
+    if not struct:
+        return None
+    try:
+        cands = struct.get("video_versions") if is_video else (struct.get("image_versions2") or {}).get("candidates")
+        return _pick_lower_res(cands or [])
+    except Exception:
+        return None
+
+
+def download_post(post, tu, folder, add_download_fn, log_fn, speed_fn=None, eco=False):
+    """Baixa um post (foto/video/carrossel) via Instaloader, na resolucao
+    configurada (maxima por padrao). Retorna a lista de caminhos salvos."""
     date_str = post.date_utc.strftime("%Y%m%d_%H%M%S")
     saved = []
     try:
         if post.typename == "GraphSidecar":
+            # itens de carrossel nao expoe candidatos de resolucao menor
+            # facilmente -- sempre baixa na qualidade maxima
             for j, node in enumerate(post.get_sidecar_nodes()):
                 try:
                     url = node.video_url if node.is_video else node.display_url
@@ -215,6 +246,10 @@ def download_post(post, tu, folder, add_download_fn, log_fn, speed_fn=None):
                     pass
         else:
             url = post.video_url if post.is_video else post.url
+            if eco:
+                alt = _eco_url(post, post.is_video)
+                if alt:
+                    url = alt
             ext = "mp4" if post.is_video else "jpg"
             fname = f"{tu}_{date_str}.{ext}"
             path = os.path.join(folder, fname)
@@ -272,8 +307,11 @@ def highlight_summary(h) -> dict:
     }
 
 
-def download_story_item(item, tu, folder, add_download_fn, log_fn, speed_fn=None):
-    """Baixa um item de story/destaque. Retorna lista de caminhos salvos."""
+def download_story_item(item, tu, folder, add_download_fn, log_fn, speed_fn=None, eco=False):
+    """Baixa um item de story/destaque, sempre na qualidade maxima --
+    stories/destaques nao expoe candidatos de resolucao menor com a
+    mesma facilidade que os posts (o parametro eco existe so pra manter
+    a mesma assinatura de download_post() e simplificar quem chama)."""
     date_str = (item.date_utc or datetime.utcnow()).strftime("%Y%m%d_%H%M%S")
     saved = []
     try:
