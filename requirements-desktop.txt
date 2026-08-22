@@ -1,3 +1,4 @@
 pywebview
 pyinstaller
 pystray
+browser_cookie3

@@ -585,6 +585,26 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
       <button class="btn btn-ghost btn-full" style="margin:10px 0;" onclick="window.open('https://www.instagram.com/accounts/login/','_blank')">
         <svg class="icon"><use href="#i-globe"/></svg> Abrir Instagram para fazer login
       </button>
+
+      <p class="login-hint" style="margin-bottom:6px;">
+        <strong>Já está logado num navegador nesse computador?</strong> Importa a
+        sessão direto, sem copiar nada:
+      </p>
+      <div class="input-row" style="margin-bottom:10px;">
+        <select class="input" id="login-browser-select">
+          <option value="chrome">Chrome</option>
+          <option value="edge">Edge</option>
+          <option value="firefox">Firefox</option>
+          <option value="brave">Brave</option>
+          <option value="opera">Opera</option>
+          <option value="vivaldi">Vivaldi</option>
+        </select>
+        <button class="btn btn-ghost" onclick="doBrowserLogin('login-browser-select', $('login-engine').value)" id="btn-browser-login">
+          Importar
+        </button>
+      </div>
+      <p class="login-hint" style="text-align:center;margin:2px 0 10px;font-size:0.72rem;">— ou cole manualmente —</p>
+
       <input type="text" id="login-sessionid" placeholder="Cole o sessionid (ou os cookies inteiros)" autocomplete="off">
       <button class="btn btn-primary btn-full btn-lg" onclick="doSessionLogin()" id="btn-session-login">
         Entrar com sessão
@@ -1023,6 +1043,31 @@ async function doSessionLogin() {
   const r = await api('/api/login-session', {method:'POST', body:JSON.stringify({sessionid:sid, engine:$('login-engine').value})});
   $('btn-session-login').disabled = false;
   $('btn-session-login').textContent = 'Entrar com sessão';
+
+  if (r.ok) {
+    loggedIn = true;
+    currentUser = r.username;
+    $('overlay').classList.add('hidden');
+    $('header-badge').className = 'status-badge online';
+    $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+r.username;
+    $('s-session-text').textContent = 'On';
+    $('s-session-user').textContent = '@'+r.username;
+    toast(r.msg);
+    refreshAll();
+  } else {
+    toast(r.msg, 'err');
+  }
+}
+
+async function doBrowserLogin(selectId, engine) {
+  const browser = $(selectId).value;
+  const btn = $('btn-browser-login');
+  btn.disabled = true;
+  btn.textContent = 'Importando...';
+
+  const r = await api('/api/login-browser', {method:'POST', body:JSON.stringify({browser, engine})});
+  btn.disabled = false;
+  btn.textContent = 'Importar';
 
   if (r.ok) {
     loggedIn = true;

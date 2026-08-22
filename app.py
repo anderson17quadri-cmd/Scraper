@@ -742,6 +742,27 @@ def api_login():
     scrape_state["current_account"] = username
     return jsonify({"ok": True, "msg": f"Conectado como @{username}", "username": username})
 
+def _do_session_login(raw_session, engine, save_sessionid=None):
+    """Loga por sessao (sessionid puro ou string de cookies inteira) e
+    salva a conta. Compartilhado entre login manual e importacao direto
+    do navegador -- save_sessionid e o valor gravado em accounts.json
+    (pode ser so o sessionid, mesmo quando o login usou mais cookies)."""
+    if engine == "instaloader":
+        L = login_iloader_sessionid(raw_session)
+        username = L.context.username
+        L.save_session_to_file(f"{SESSIONS_DIR}/{username}.iloader")
+    else:
+        cl = login_by_sessionid(raw_session)
+        username = cl.username
+        cl.dump_settings(f"{SESSIONS_DIR}/{username}.json")
+
+    upsert_account(username, sessionid=save_sessionid or raw_session, engine=engine)
+
+    global scrape_state
+    scrape_state["connected"] = True
+    scrape_state["current_account"] = username
+    return username
+
 @app.route("/api/login-session", methods=["POST"])
 def api_login_session():
     data = request.get_json() or {}
@@ -751,23 +772,69 @@ def api_login_session():
         return jsonify({"ok": False, "msg": "Cole o sessionid copiado do navegador"})
 
     try:
-        if engine == "instaloader":
-            L = login_iloader_sessionid(sessionid)
-            username = L.context.username
-            L.save_session_to_file(f"{SESSIONS_DIR}/{username}.iloader")
-        else:
-            cl = login_by_sessionid(sessionid)
-            username = cl.username
-            cl.dump_settings(f"{SESSIONS_DIR}/{username}.json")
+        username = _do_session_login(sessionid, engine)
     except Exception as e:
         return jsonify({"ok": False, "msg": _translate_any_error(e)})
 
-    upsert_account(username, sessionid=sessionid, engine=engine)
-
-    global scrape_state
-    scrape_state["connected"] = True
-    scrape_state["current_account"] = username
     return jsonify({"ok": True, "msg": f"Conectado como @{username} (via sessao)", "username": username})
+
+# navegadores suportados pelo browser_cookie3 que fazem sentido num PC
+# Windows comum -- a lib suporta mais (Safari, LibreWolf...) mas esses
+# cobrem quase todo mundo
+_BROWSERS = {
+    "chrome": "Chrome", "edge": "Edge", "firefox": "Firefox",
+    "brave": "Brave", "opera": "Opera", "vivaldi": "Vivaldi",
+}
+
+def _cookies_from_browser(browser: str) -> dict:
+    """Le os cookies do instagram.com direto de um navegador instalado
+    na propria maquina (mesma ideia do Cookie-Editor, sem copiar e colar
+    nada) usando browser_cookie3 -- a mesma biblioteca que o projeto
+    Instaloader usa no --load-cookies do CLI oficial dele."""
+    try:
+        import browser_cookie3
+    except ImportError:
+        raise RuntimeError(
+            "Esse recurso precisa da biblioteca browser_cookie3 (so vem no app "
+            "desktop empacotado, nao no modo web/Termux)."
+        )
+    getter = getattr(browser_cookie3, browser, None)
+    if getter is None:
+        raise ValueError(f"Navegador nao suportado: {browser}")
+    try:
+        jar = getter(domain_name="instagram.com")
+    except Exception as e:
+        raise RuntimeError(
+            f"Nao consegui ler os cookies do {_BROWSERS.get(browser, browser)}. "
+            f"Feche o navegador e tente de novo (alguns navegadores travam o "
+            f"arquivo de cookies enquanto estao abertos). Detalhe: {e}"
+        )
+    cookies = {c.name: c.value for c in jar}
+    if not cookies.get("sessionid"):
+        raise RuntimeError(
+            f"Nao achei um login do Instagram no {_BROWSERS.get(browser, browser)}. "
+            "Faca login em instagram.com nesse navegador primeiro."
+        )
+    return cookies
+
+@app.route("/api/login-browser", methods=["POST"])
+def api_login_browser():
+    data = request.get_json() or {}
+    browser = (data.get("browser") or "").strip().lower()
+    engine = data.get("engine") if data.get("engine") in ("instagrapi", "instaloader") else "instagrapi"
+    if browser not in _BROWSERS:
+        return jsonify({"ok": False, "msg": "Navegador invalido"})
+
+    try:
+        cookies = _cookies_from_browser(browser)
+        raw = "; ".join(f"{k}={v}" for k, v in cookies.items())
+        username = _do_session_login(raw, engine, save_sessionid=cookies["sessionid"])
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e) if isinstance(e, (RuntimeError, ValueError)) else _translate_any_error(e)})
+
+    return jsonify({"ok": True,
+                    "msg": f"Conectado como @{username} (importado do {_BROWSERS[browser]})",
+                    "username": username})
 
 @app.route("/api/logout", methods=["POST"])
 def api_logout():
