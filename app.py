@@ -285,16 +285,25 @@ def _fetch_highlight_items_raw(cl, highlight_pk):
     items = [_RawStory(it) for it in raw.get("items", [])]
     return title, items
 
-def _make_zip(target, paths):
-    paths = [p for p in paths if p and os.path.exists(p)]
-    if not paths:
+def _make_zip(target, items):
+    """items: lista de caminhos (ficam soltos na raiz do zip) OU de
+    tuplas (caminho, subpasta) pra organizar em pastas dentro do zip
+    (ex: "posts", "reels", "stories", "destaques/Viagens") -- usado pelo
+    "Baixar tudo", que junta varias categorias num zip so."""
+    pairs = []
+    for it in items:
+        path, subfolder = it if isinstance(it, tuple) else (it, None)
+        if path and os.path.exists(path):
+            pairs.append((path, subfolder))
+    if not pairs:
         return None
     os.makedirs(ZIPS_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_path = f"{ZIPS_DIR}/{target}_{ts}.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for p in paths:
-            zf.write(p, arcname=os.path.basename(p))
+        for path, subfolder in pairs:
+            arcname = f"{subfolder}/{os.path.basename(path)}" if subfolder else os.path.basename(path)
+            zf.write(path, arcname=arcname)
     return f"/downloads/_zips/{os.path.basename(zip_path)}"
 
 def _add_log(msg, typ="info"):
@@ -1413,6 +1422,159 @@ def _do_selected_download(cache, medias):
             done_msg = f"Finalizado: {len(all_saved)} arquivos baixados"
             scrape_state["message"] = done_msg + (" (zip pronto)" if zip_url else "")
             _add_log("Download dos selecionados concluido", "success")
+    except Exception as e:
+        _add_log(f"Erro fatal: {e}", "error")
+        scrape_state["message"] = f"Erro fatal: {e}"
+    finally:
+        scrape_state["running"] = False
+        scrape_state["connected"] = False
+        scrape_state["current"] = ""
+        scrape_state["stop_requested"] = False
+
+@app.route("/api/download-all", methods=["POST"])
+def api_download_all():
+    """"Baixar tudo": posts, reels, stories e destaques de um perfil,
+    tudo numa tacada so, terminando num unico zip organizado em pastas
+    por categoria -- sem precisar repetir "buscar > selecionar > baixar"
+    quatro vezes, uma por aba."""
+    global scrape_state
+    if scrape_state["running"]:
+        return jsonify({"ok": False, "msg": "Scraping ja esta rodando"})
+    data = request.get_json() or {}
+    target_username = (data.get("target_username") or "").strip().lstrip("@")
+    if not target_username:
+        return jsonify({"ok": False, "msg": "Informe o perfil alvo"})
+
+    threading.Thread(target=_do_download_all, args=(target_username, data.get("account_index")), daemon=True).start()
+    return jsonify({"ok": True, "msg": f"Baixando tudo de @{target_username}..."})
+
+def _do_download_all(target_username, account_index):
+    global scrape_state
+    tu = target_username
+    _speed_stats["bytes"] = 0
+    _speed_stats["seconds"] = 0.0
+    last_failed_groups.clear()
+    scrape_state.update(running=True, connected=False, current_account="",
+                        message=f"Conectando pra baixar tudo de @{tu}...", progress=0, total=0,
+                        current=f"@{tu}", logs=[], stop_requested=False, zip_url=None,
+                        speed="", speed_avg="", failed_count=0)
+    all_saved = []  # lista de (caminho, subpasta) pro zip final
+    try:
+        try:
+            engine, cl = _get_client(account_index)
+        except Exception as e:
+            msg = _translate_any_error(e)
+            _add_log(f"Erro ao conectar: {msg}", "error")
+            scrape_state["message"] = f"Erro: {msg}"
+            return
+        account_label = (getattr(cl.context, "username", "") if engine == "instaloader"
+                          else getattr(cl, "username", "")) or ""
+        scrape_state["connected"] = True
+        scrape_state["current_account"] = account_label
+        cfg = get_cfg()
+
+        def _baixa_categoria(nome, medias, folder, downloader, subfolder):
+            if _stopped():
+                return
+            scrape_state["message"] = f"Baixando {nome} de @{tu}..."
+            scrape_state["total"] = len(medias)
+            _add_log(f"@{tu}: {len(medias)} {nome} encontrados")
+            os.makedirs(folder, exist_ok=True)
+            saved, _cnt, failed = _run_downloads(medias, downloader, cl, tu, folder, _item_id)
+            _register_failed(cl, tu, folder, downloader, failed, _item_id)
+            all_saved.extend((p, subfolder) for p in saved)
+
+        # 1. POSTS
+        scrape_state["message"] = f"Buscando posts de @{tu}..."
+        _add_log(f"Buscando posts de @{tu}...")
+        try:
+            if engine == "instaloader":
+                profile = instaloader.Profile.from_username(cl.context, tu)
+                posts = list(itertools.islice(profile.get_posts(), cfg.get("posts_per_profile", 15)))
+                downloader = lambda cl, tu, m, folder: _iloader_download_post(m, tu, folder, add_download, _add_log, _record_speed)
+            else:
+                uid = cl.user_id_from_username(tu)
+                posts = cl.user_medias(uid, amount=cfg.get("posts_per_profile", 15))
+                downloader = _download_one
+            _baixa_categoria("posts", posts, f"{DOWNLOADS_DIR}/{tu}", downloader, "posts")
+        except Exception as e:
+            _add_log(f"Erro ao buscar posts: {_translate_any_error(e)}", "error")
+
+        # 2. REELS
+        if not _stopped():
+            scrape_state["message"] = f"Buscando reels de @{tu}..."
+            _add_log(f"Buscando reels de @{tu}...")
+            try:
+                if engine == "instaloader":
+                    profile = instaloader.Profile.from_username(cl.context, tu)
+                    reels = [x for x in itertools.islice(profile.get_posts(), 60) if x.is_video]
+                    downloader = lambda cl, tu, m, folder: _iloader_download_post(m, tu, folder, add_download, _add_log, _record_speed)
+                else:
+                    uid = cl.user_id_from_username(tu)
+                    reels = list(cl.user_clips(uid, amount=PREVIEW_PAGE_SIZE))
+                    downloader = _download_one
+                _baixa_categoria("reels", reels, f"{DOWNLOADS_DIR}/{tu}/reels", downloader, "reels")
+            except Exception as e:
+                _add_log(f"Erro ao buscar reels: {_translate_any_error(e)}", "error")
+
+        # 3. STORIES (ativos, expiram em 24h -- pode nao ter nenhum)
+        if not _stopped():
+            scrape_state["message"] = f"Buscando stories de @{tu}..."
+            _add_log(f"Buscando stories de @{tu}...")
+            try:
+                if engine == "instaloader":
+                    stories = _iloader_fetch_stories(cl, tu)
+                    downloader = lambda cl, tu, m, folder: _iloader_download_story(m, tu, folder, add_download, _add_log, _record_speed)
+                else:
+                    uid = cl.user_id_from_username(tu)
+                    stories = list(cl.user_stories(uid))
+                    downloader = _download_story_item
+                _baixa_categoria("stories", stories, f"{DOWNLOADS_DIR}/{tu}/stories", downloader, "stories")
+            except Exception as e:
+                _add_log(f"Erro ao buscar stories: {_translate_any_error(e)}", "error")
+
+        # 4. DESTAQUES (cada um numa subpasta com o proprio titulo)
+        if not _stopped():
+            scrape_state["message"] = f"Buscando destaques de @{tu}..."
+            _add_log(f"Buscando destaques de @{tu}...")
+            try:
+                if engine == "instaloader":
+                    highlights = _iloader_fetch_highlights(cl, tu)
+                    downloader = lambda cl, tu, m, folder: _iloader_download_story(m, tu, folder, add_download, _add_log, _record_speed)
+                    for h in highlights:
+                        if _stopped():
+                            break
+                        title = _safe_name(h.title or "Destaque")
+                        try:
+                            items = list(h.get_items())
+                        except Exception as e:
+                            _add_log(f"Erro no destaque {title}: {_translate_any_error(e)}", "error")
+                            continue
+                        _baixa_categoria(f"itens de '{title}'", items,
+                                        f"{DOWNLOADS_DIR}/{tu}/highlights/{title}", downloader, f"destaques/{title}")
+                else:
+                    uid = cl.user_id_from_username(tu)
+                    highlights = cl.user_highlights(uid)
+                    for h in highlights:
+                        if _stopped():
+                            break
+                        try:
+                            fetched_title, items = _fetch_highlight_items_raw(cl, h.pk)
+                        except Exception as e:
+                            _add_log(f"Erro no destaque {h.title or h.pk}: {_translate_any_error(e)}", "error")
+                            continue
+                        title = _safe_name(h.title or fetched_title)
+                        _baixa_categoria(f"itens de '{title}'", items,
+                                        f"{DOWNLOADS_DIR}/{tu}/highlights/{title}", _download_story_item, f"destaques/{title}")
+            except Exception as e:
+                _add_log(f"Erro ao buscar destaques: {_translate_any_error(e)}", "error")
+
+        if not scrape_state.get("stop_requested"):
+            zip_url = _make_zip(tu, all_saved)
+            scrape_state["zip_url"] = zip_url
+            done_msg = f"Finalizado: {len(all_saved)} arquivos baixados (tudo de @{tu})"
+            scrape_state["message"] = done_msg + (" (zip pronto)" if zip_url else "")
+            _add_log("Download completo (tudo) concluido", "success")
     except Exception as e:
         _add_log(f"Erro fatal: {e}", "error")
         scrape_state["message"] = f"Erro fatal: {e}"

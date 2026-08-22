@@ -676,6 +676,9 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
         <button class="btn btn-ghost btn-xs preview-tab" data-mode="stories" onclick="switchPreviewMode('stories')"><svg class="icon"><use href="#i-clock"/></svg> Stories</button>
         <button class="btn btn-ghost btn-xs preview-tab" data-mode="highlights" onclick="switchPreviewMode('highlights')"><svg class="icon"><use href="#i-star"/></svg> Destaques</button>
       </div>
+      <button class="btn btn-success btn-full" id="btn-download-all" style="margin-top:10px;" onclick="downloadAll()" hidden>
+        <svg class="icon"><use href="#i-package"/></svg> Baixar tudo (posts, reels, stories e destaques num zip só)
+      </button>
 
       <div id="highlight-back" hidden style="margin-bottom:8px;">
         <button class="btn btn-ghost btn-xs" onclick="backToHighlightsList()"><svg class="icon"><use href="#i-arrow-left"/></svg> Destaques</button>
@@ -1327,6 +1330,7 @@ function setModoBusca(modo) {
   $('busca-link').hidden = !porLink;
   // as abas Posts/Reels/Stories/Destaques so fazem sentido buscando por perfil
   $('preview-tabs').hidden = porLink || !previewTarget;
+  $('btn-download-all').hidden = porLink || !previewTarget;
   (porLink ? $('preview-url') : $('preview-target')).focus();
 }
 
@@ -1336,6 +1340,7 @@ async function buscarPorLink() {
 
   resetPreviewGrid();
   $('preview-tabs').hidden = true;
+  $('btn-download-all').hidden = true;
   $('btn-url-load').disabled = true;
   $('preview-grid').innerHTML = '<div class="empty"><p>Abrindo link...</p></div>';
 
@@ -1381,8 +1386,17 @@ async function searchProfile() {
   $('highlight-back').hidden = true;
   $('highlights-list').hidden = true;
   $('preview-tabs').hidden = false;
+  $('btn-download-all').hidden = false;
   setActiveTab('posts');
   await loadPostsPreview();
+}
+
+async function downloadAll() {
+  if (!previewTarget) return;
+  if (!confirm(`Baixar TUDO (posts, reels, stories e destaques) de @${previewTarget}? Isso pode demorar bastante dependendo do tamanho do perfil.`)) return;
+  const r = await api('/api/download-all', {method:'POST', body:JSON.stringify(previewAccountBody())});
+  if (!r.ok) return toast(r.msg || 'Erro', 'err');
+  toast(r.msg);
 }
 
 function setActiveTab(mode) {
