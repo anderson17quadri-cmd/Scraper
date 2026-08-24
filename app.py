@@ -885,11 +885,30 @@ def _cookies_from_browser(browser: str) -> dict:
     getter = getattr(browser_cookie3, browser, None)
     if getter is None:
         raise ValueError(f"Navegador nao suportado: {browser}")
+    nome = _BROWSERS.get(browser, browser)
     try:
         jar = getter(domain_name="instagram.com")
     except Exception as e:
+        es = str(e)
+        if "requires admin" in es.lower() or "administrator" in es.lower():
+            # o Chrome (e navegadores baseados nele, tipo Edge) protegem os
+            # cookies com uma camada extra desde meados de 2024 (App-Bound
+            # Encryption) que so o proprio processo do Chrome consegue
+            # descriptografar -- de proposito, pra travar justamente esse
+            # tipo de leitura automatica. Nao existe "rodar como admin" que
+            # resolva isso (nao e sobre permissao, e sobre so o Chrome poder
+            # abrir essa chave); o navegador precisa ser trocado por um sem
+            # essa protecao, ou usar a colagem manual do sessionid.
+            raise RuntimeError(
+                f"O {nome} protege os cookies com uma criptografia extra que só o "
+                f"próprio navegador consegue abrir (proteção de segurança do "
+                f"Chrome/Edge desde 2024) -- não tem como contornar isso por fora, "
+                f"nem rodando como administrador. Tenta importar do Firefox, se "
+                f"tiver instalado, ou cola o sessionid manualmente (aba 'ou cole "
+                f"manualmente' logo abaixo)."
+            )
         raise RuntimeError(
-            f"Nao consegui ler os cookies do {_BROWSERS.get(browser, browser)}. "
+            f"Nao consegui ler os cookies do {nome}. "
             f"Feche o navegador e tente de novo (alguns navegadores travam o "
             f"arquivo de cookies enquanto estao abertos). Detalhe: {e}"
         )
