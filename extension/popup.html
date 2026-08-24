@@ -10,6 +10,7 @@
     --green: #4ade80; --red: #f87171;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     width: 300px; margin: 0; padding: 16px;
     background: var(--bg); color: var(--text);
@@ -37,6 +38,17 @@
   #status.ok { color: var(--green); }
   #status.err { color: var(--red); }
   .hint { font-size: 0.68rem; color: var(--dim); margin-top: 14px; line-height: 1.5; }
+  .divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+  .profile-card {
+    display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    font-size: 0.85rem; font-weight: 600;
+  }
+  .profile-card .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+  .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+  .btn-row button { margin-top: 0; }
+  .btn-secondary { background: var(--card) !important; border: 1px solid var(--border) !important; color: var(--text) !important; }
+  .empty-note { font-size: 0.78rem; color: var(--dim); text-align: center; padding: 10px 0; }
 </style>
 </head>
 <body>
@@ -60,6 +72,20 @@
     só dessa aba do navegador e manda pro IG-Scraper Pro rodando no seu PC --
     nada sai da sua máquina.
   </p>
+
+  <hr class="divider">
+
+  <div id="profile-section">
+    <div id="profile-card" class="profile-card" hidden>
+      <span class="dot"></span><span id="profile-name">@usuario</span>
+    </div>
+    <p id="profile-empty" class="empty-note">Abra o perfil de alguém no Instagram pra ver as opções aqui.</p>
+    <div class="btn-row" id="profile-actions" hidden>
+      <button id="btn-add-target" class="btn-secondary">+ Alvos</button>
+      <button id="btn-baixar-tudo">Baixar tudo</button>
+    </div>
+    <div id="profile-status"></div>
+  </div>
 
   <script src="popup.js"></script>
 </body>

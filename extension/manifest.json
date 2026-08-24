@@ -3,7 +3,7 @@
   "name": "IG-Scraper Pro - Conector",
   "version": "1.0",
   "description": "Conecta a conta do Instagram logada nesse navegador direto no IG-Scraper Pro, sem copiar e colar sessionid.",
-  "permissions": ["cookies", "storage"],
+  "permissions": ["cookies", "storage", "activeTab"],
   "host_permissions": [
     "*://*.instagram.com/*",
     "http://localhost/*",
