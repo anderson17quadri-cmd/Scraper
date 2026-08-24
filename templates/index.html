@@ -659,6 +659,11 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
         <input class="input" id="preview-target" placeholder="Perfil do Instagram (sem @)" onkeydown="if(event.key==='Enter')searchProfile()">
         <button class="btn btn-primary" onclick="searchProfile()" id="btn-preview-load">Buscar</button>
       </div>
+      <div class="input-row" id="busca-perfil-saved" style="margin-top:8px;">
+        <select class="input" id="preview-target-saved" onchange="buscarAlvoSalvo()">
+          <option value="">Ou escolha um perfil alvo salvo...</option>
+        </select>
+      </div>
       <div class="input-row" id="busca-perfil-dates" style="margin-top:8px;">
         <input class="input" type="date" id="preview-date-from" title="Só a partir dessa data">
         <input class="input" type="date" id="preview-date-to" title="Só até essa data">
@@ -1367,6 +1372,7 @@ function setModoBusca(modo) {
   $('busca-perfil').hidden = porLink;
   $('busca-perfil-dates').hidden = porLink;
   $('busca-perfil-dates-hint').hidden = porLink;
+  $('busca-perfil-saved').hidden = porLink;
   $('busca-link').hidden = !porLink;
   // as abas Posts/Reels/Stories/Destaques so fazem sentido buscando por perfil
   $('preview-tabs').hidden = porLink || !previewTarget;
@@ -1429,6 +1435,21 @@ async function searchProfile() {
   $('btn-download-all').hidden = false;
   setActiveTab('posts');
   await loadPostsPreview();
+}
+
+function buscarAlvoSalvo() {
+  const username = $('preview-target-saved').value;
+  if (!username) return;
+  $('preview-target').value = username;
+  $('preview-target-saved').value = '';
+  searchProfile();
+}
+
+function baixarDoAlvo(username) {
+  showPage('baixar');
+  setModoBusca('perfil');
+  $('preview-target').value = username;
+  searchProfile();
 }
 
 async function downloadAll() {
@@ -1785,11 +1806,24 @@ async function refreshAll() {
         <div class="meta"><span style="color:var(--yellow)">${stars}</span></div>
       </div>
       <div class="actions">
+        <button class="btn btn-primary btn-xs" onclick="baixarDoAlvo('${t.username}')" title="Baixar desse perfil">${ic('search')} Baixar</button>
         <button class="btn btn-ghost btn-xs" onclick="toggleTarget(${i})">${active?'Pausar':'Ativar'}</button>
         <button class="btn btn-danger btn-xs" onclick="delTarget(${i})" title="Remover">${ic('trash')}</button>
       </div></div>`;
   });
   $('targets-list').innerHTML = thtml || `<div class="empty"><span class="icon">${ic('target','icon icon-lg')}</span><p>Nenhum alvo adicionado</p></div>`;
+
+  // Select de acesso rapido aos alvos salvos na tela de Baixar (valor e
+  // o proprio @usuario, nao um indice -- fillSelect() nao serve aqui
+  // porque o onchange precisa do usuario direto, sem precisar buscar
+  // a lista de targets de novo)
+  const savedSel = $('preview-target-saved');
+  let savedHtml = '<option value="">Ou escolha um perfil alvo salvo...</option>';
+  (tgt.targets || []).forEach(t => {
+    if (t.active === false) return;
+    savedHtml += `<option value="${t.username}">@${t.username}</option>`;
+  });
+  savedSel.innerHTML = savedHtml;
 
   // Select de alvos (para o download automatico)
   fillSelect($('scrape-target'), 'Todos os alvos', tgt.targets);
