@@ -7,25 +7,37 @@
   :root {
     --bg: #0a0a0f; --card: #14141c; --border: #232330; --text: #f4f4f6;
     --dim: #9a9aae; --accent: #6366f1; --accent-2: #22d3ee;
-    --green: #4ade80; --red: #f87171;
+    --green: #4ade80; --red: #f87171; --yellow: #fbbf24;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   body {
-    width: 360px; margin: 0; padding: 14px;
+    width: 380px; margin: 0; padding: 14px;
     background: var(--bg); color: var(--text);
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    max-height: 580px; overflow-y: auto;
   }
   .logo { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-weight: 700; font-size: 0.95rem; }
   .logo img { width: 22px; height: 22px; border-radius: 6px; }
-  .tabs { display: flex; gap: 4px; margin-bottom: 12px; padding: 3px; background: var(--card);
-    border: 1px solid var(--border); border-radius: 10px; flex-wrap: wrap; }
-  .tab-btn { flex: 1 1 45%; border: none; background: transparent; color: var(--dim);
-    padding: 7px 4px; border-radius: 7px; font-size: 0.68rem; cursor: pointer; font-weight: 600; }
-  .tab-btn.active { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
-  .panel { display: none; }
-  .panel.active { display: block; }
-  .panel p.desc { font-size: 0.76rem; color: var(--dim); margin: 0 0 10px; line-height: 1.5; }
+  .group-title { font-size: 0.68rem; color: var(--dim); text-transform: uppercase; letter-spacing: .04em;
+    font-weight: 700; margin: 14px 0 6px; }
+  .group-title:first-child { margin-top: 0; }
+  .menu-item {
+    width: 100%; text-align: left; display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; margin-bottom: 6px; border-radius: 8px;
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+    font-size: 0.82rem; font-weight: 600; cursor: pointer;
+  }
+  .menu-item:hover { border-color: var(--accent); }
+  .menu-item .emoji { font-size: 1rem; }
+  .menu-item .arrow { margin-left: auto; color: var(--dim); }
+
+  .back-btn {
+    display: flex; align-items: center; gap: 6px; background: none; border: none;
+    color: var(--dim); font-size: 0.78rem; cursor: pointer; padding: 0 0 10px; font-weight: 600;
+  }
+  .back-btn:hover { color: var(--text); }
+  .tool-view p.desc { font-size: 0.76rem; color: var(--dim); margin: 0 0 10px; line-height: 1.5; }
   button.primary {
     width: 100%; padding: 10px; border: none; border-radius: 8px;
     background: linear-gradient(135deg, var(--accent), var(--accent-2));
@@ -37,11 +49,15 @@
     background: var(--card); border: 1px solid var(--border); color: var(--text);
     font-size: 0.8rem; font-weight: 600; cursor: pointer;
   }
+  .btn-row { display: flex; gap: 8px; }
+  .btn-row button { margin-top: 0; }
   .result { margin-top: 12px; font-size: 0.8rem; line-height: 1.6; }
   .result-box {
     background: var(--card); border: 1px solid var(--border); border-radius: 8px;
     padding: 10px 12px; margin-bottom: 8px;
   }
+  .result-box.warn { border-color: var(--yellow); }
+  .result-box.bad { border-color: var(--red); }
   .result-box b { color: var(--text); }
   .swatch-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
   .swatch { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border); }
@@ -49,44 +65,168 @@
   .status.ok { color: var(--green); }
   .status.err { color: var(--red); }
   .empty-note { font-size: 0.78rem; color: var(--dim); text-align: center; padding: 6px 0; }
+  input[type=range] { width: 100%; }
+  .compare-wrap { position: relative; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  .compare-wrap img { display: block; width: 100%; }
+  .compare-wrap .depois-layer { position: absolute; top: 0; left: 0; height: 100%; overflow: hidden; }
+  .compare-wrap .depois-layer img { width: var(--wrap-w, 340px); max-width: none; }
+  .colecao-item { display: flex; gap: 8px; align-items: center; padding: 8px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; }
+  .colecao-item img { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; flex-shrink: 0; background: #222; }
+  .colecao-item .info { flex: 1; min-width: 0; font-size: 0.74rem; }
+  .colecao-item .info b { display: block; font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .colecao-item .del { background: none; border: none; color: var(--red); cursor: pointer; font-size: 0.9rem; flex-shrink: 0; }
 </style>
 </head>
 <body>
   <div class="logo"><img src="icon48.png"><span>Kit de Ferramentas p/ Landing Page</span></div>
 
-  <div class="tabs">
-    <button class="tab-btn active" data-tab="cores">🎨 Cores e Fontes</button>
-    <button class="tab-btn" data-tab="textos">📝 Títulos e Botões</button>
-    <button class="tab-btn" data-tab="share">🔗 Ao Compartilhar</button>
-    <button class="tab-btn" data-tab="rastreadores">👁 Rastreadores</button>
+  <!-- ═══ MENU PRINCIPAL ═══ -->
+  <div id="view-home">
+    <div class="group-title">Estudar a concorrência</div>
+    <button class="menu-item" data-tool="cores"><span class="emoji">🎨</span> Cores e Fontes <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="textos"><span class="emoji">📝</span> Títulos e Botões <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="rastreadores"><span class="emoji">👁</span> Rastreadores <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="colecao"><span class="emoji">📌</span> Coleção de Inspiração <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="urgencia"><span class="emoji">⏰</span> Gatilhos de Urgência <span class="arrow">›</span></button>
+
+    <div class="group-title">Conferir qualidade</div>
+    <button class="menu-item" data-tool="seo"><span class="emoji">🔍</span> Checagem de SEO <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="acessibilidade"><span class="emoji">♿</span> Acessibilidade <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="responsivo"><span class="emoji">📱</span> Ver em Vários Tamanhos <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="velocidade"><span class="emoji">⚡</span> Velocidade <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="links"><span class="emoji">🔗</span> Links Quebrados <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="formulario"><span class="emoji">✍️</span> Testar Formulário <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="pixelteste"><span class="emoji">📡</span> Testar Disparo de Pixel <span class="arrow">›</span></button>
+
+    <div class="group-title">Compartilhar e apresentar</div>
+    <button class="menu-item" data-tool="share"><span class="emoji">🔗</span> Ao Compartilhar <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="antesdepois"><span class="emoji">🔀</span> Antes e Depois <span class="arrow">›</span></button>
+    <button class="menu-item" data-tool="mockup"><span class="emoji">🖼️</span> Mockup em Dispositivo <span class="arrow">›</span></button>
   </div>
 
-  <!-- CORES E FONTES -->
-  <div class="panel active" id="panel-cores">
+  <!-- ═══ 1. CORES E FONTES ═══ -->
+  <div class="tool-view" id="view-cores" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
     <p class="desc">Olha essa página e te mostra as cores e os tipos de letra que ela mais usa — bom pra copiar o estilo de um site que você gostou.</p>
-    <button class="primary" id="btn-cores">Analisar essa página</button>
+    <button class="primary" data-action="cores">Analisar essa página</button>
     <div class="result" id="result-cores"></div>
   </div>
 
-  <!-- TITULOS E BOTOES -->
-  <div class="panel" id="panel-textos">
+  <!-- ═══ 2. TITULOS E BOTOES ═══ -->
+  <div class="tool-view" id="view-textos" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
     <p class="desc">Lista todos os títulos e textos de botão dessa página, prontos pra você estudar como ela convence o visitante a agir.</p>
-    <button class="primary" id="btn-textos">Analisar essa página</button>
+    <button class="primary" data-action="textos">Analisar essa página</button>
     <div class="result" id="result-textos"></div>
   </div>
 
-  <!-- SHARE PREVIEW -->
-  <div class="panel" id="panel-share">
+  <!-- ═══ 3. RASTREADORES ═══ -->
+  <div class="tool-view" id="view-rastreadores" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Mostra quais empresas de anúncio (Facebook, Google, TikTok...) essa página deixa acompanhar quem visita ela.</p>
+    <button class="primary" data-action="rastreadores">Analisar essa página</button>
+    <div class="result" id="result-rastreadores"></div>
+  </div>
+
+  <!-- ═══ 4. COLECAO DE INSPIRACAO ═══ -->
+  <div class="tool-view" id="view-colecao" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Guarda essa página numa lista pessoal sua, pra não perder de vista quando encontrar algo que te inspirou.</p>
+    <button class="primary" data-action="colecao-salvar">Salvar essa página na coleção</button>
+    <div class="result" id="result-colecao"></div>
+  </div>
+
+  <!-- ═══ 5. GATILHOS DE URGENCIA ═══ -->
+  <div class="tool-view" id="view-urgencia" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Procura na página frases de urgência ou escassez (tipo "restam só 3" ou "oferta acaba hoje") — útil pra estudar como um concorrente usa isso pra vender.</p>
+    <button class="primary" data-action="urgencia">Analisar essa página</button>
+    <div class="result" id="result-urgencia"></div>
+  </div>
+
+  <!-- ═══ 6. SEO ═══ -->
+  <div class="tool-view" id="view-seo" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Confere se essa página está configurada do jeito que o Google gosta -- título, descrição, imagens com texto explicativo.</p>
+    <button class="primary" data-action="seo">Analisar essa página</button>
+    <div class="result" id="result-seo"></div>
+  </div>
+
+  <!-- ═══ 7. ACESSIBILIDADE ═══ -->
+  <div class="tool-view" id="view-acessibilidade" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Aponta coisas que dificultam a vida de quem tem dificuldade de visão ou usa leitor de tela pra navegar -- também ajuda a conversão de todo mundo.</p>
+    <button class="primary" data-action="acessibilidade">Analisar essa página</button>
+    <div class="result" id="result-acessibilidade"></div>
+  </div>
+
+  <!-- ═══ 8. RESPONSIVO ═══ -->
+  <div class="tool-view" id="view-responsivo" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Abre essa mesma página em três janelas de tamanhos diferentes (celular, tablet, computador) lado a lado, pra você ver se fica boa em todas.</p>
+    <button class="primary" data-action="responsivo">Abrir nos 3 tamanhos</button>
+    <div class="result" id="result-responsivo"></div>
+  </div>
+
+  <!-- ═══ 9. VELOCIDADE ═══ -->
+  <div class="tool-view" id="view-velocidade" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Mede quanto tempo essa página demorou pra carregar de verdade, e quantos arquivos ela precisou baixar pra isso.</p>
+    <button class="primary" data-action="velocidade">Analisar essa página</button>
+    <div class="result" id="result-velocidade"></div>
+  </div>
+
+  <!-- ═══ 10. LINKS QUEBRADOS ═══ -->
+  <div class="tool-view" id="view-links" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Testa os links e imagens dessa página e avisa quais parecem estar quebrados. Pode demorar um pouquinho.</p>
+    <button class="primary" data-action="links">Checar links dessa página</button>
+    <div class="result" id="result-links"></div>
+  </div>
+
+  <!-- ═══ 11. TESTAR FORMULARIO ═══ -->
+  <div class="tool-view" id="view-formulario" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Preenche os formulários dessa página com dados de teste (nome, e-mail, telefone falsos), pra você conferir rapidinho se está tudo certo antes de enviar de verdade.</p>
+    <button class="primary" data-action="formulario">Preencher com dados de teste</button>
+    <div class="result" id="result-formulario"></div>
+  </div>
+
+  <!-- ═══ 12. TESTAR PIXEL ═══ -->
+  <div class="tool-view" id="view-pixelteste" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Tenta acionar os rastreadores de anúncio dessa página (igual aconteceria quando alguém compra ou preenche um formulário), pra ver se eles respondem.</p>
+    <button class="primary" data-action="pixelteste">Testar disparo</button>
+    <div class="result" id="result-pixelteste"></div>
+  </div>
+
+  <!-- ═══ 13. SHARE PREVIEW ═══ -->
+  <div class="tool-view" id="view-share" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
     <p class="desc">Mostra como o link dessa página vai aparecer quando alguém colar no WhatsApp, Instagram ou Facebook — título, descrição e imagem.</p>
-    <button class="primary" id="btn-share">Analisar essa página</button>
+    <button class="primary" data-action="share">Analisar essa página</button>
     <div class="result" id="result-share"></div>
   </div>
 
-  <!-- RASTREADORES -->
-  <div class="panel" id="panel-rastreadores">
-    <p class="desc">Mostra quais empresas de anúncio (Facebook, Google, TikTok...) essa página deixa acompanhar quem visita ela.</p>
-    <button class="primary" id="btn-rastreadores">Analisar essa página</button>
-    <div class="result" id="result-rastreadores"></div>
+  <!-- ═══ 14. ANTES E DEPOIS ═══ -->
+  <div class="tool-view" id="view-antesdepois" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Tira um print de "antes", depois volta aqui e tira um de "depois" (numa versão nova da página) -- mostra os dois com um controle deslizante pra comparar.</p>
+    <div class="btn-row">
+      <button class="secondary" data-action="antes-print">Print "Antes"</button>
+      <button class="secondary" data-action="depois-print">Print "Depois"</button>
+    </div>
+    <button class="secondary" data-action="antesdepois-limpar" style="margin-top:8px;">Limpar e recomeçar</button>
+    <div class="result" id="result-antesdepois"></div>
+  </div>
+
+  <!-- ═══ 15. MOCKUP ═══ -->
+  <div class="tool-view" id="view-mockup" hidden>
+    <button class="back-btn" data-back>← Voltar</button>
+    <p class="desc">Tira um print dessa página e coloca dentro de uma moldura de celular, pronto pra postar no portfólio ou mandar pro cliente.</p>
+    <button class="primary" data-action="mockup">Criar mockup</button>
+    <div class="result" id="result-mockup"></div>
   </div>
 
   <button class="secondary" id="btn-copiar" hidden>📋 Copiar resultado pro Claude</button>
