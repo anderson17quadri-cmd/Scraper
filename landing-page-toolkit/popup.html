@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Kit de Ferramentas para Landing Page</title>
+<style>
+  :root {
+    --bg: #0a0a0f; --card: #14141c; --border: #232330; --text: #f4f4f6;
+    --dim: #9a9aae; --accent: #6366f1; --accent-2: #22d3ee;
+    --green: #4ade80; --red: #f87171;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    width: 360px; margin: 0; padding: 14px;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .logo { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-weight: 700; font-size: 0.95rem; }
+  .logo img { width: 22px; height: 22px; border-radius: 6px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 12px; padding: 3px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 10px; flex-wrap: wrap; }
+  .tab-btn { flex: 1 1 45%; border: none; background: transparent; color: var(--dim);
+    padding: 7px 4px; border-radius: 7px; font-size: 0.68rem; cursor: pointer; font-weight: 600; }
+  .tab-btn.active { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .panel p.desc { font-size: 0.76rem; color: var(--dim); margin: 0 0 10px; line-height: 1.5; }
+  button.primary {
+    width: 100%; padding: 10px; border: none; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff; font-weight: 700; font-size: 0.85rem; cursor: pointer;
+  }
+  button.primary:disabled { opacity: 0.6; cursor: default; }
+  button.secondary {
+    width: 100%; margin-top: 8px; padding: 9px; border-radius: 8px;
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+    font-size: 0.8rem; font-weight: 600; cursor: pointer;
+  }
+  .result { margin-top: 12px; font-size: 0.8rem; line-height: 1.6; }
+  .result-box {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 8px;
+  }
+  .result-box b { color: var(--text); }
+  .swatch-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .swatch { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border); }
+  .status { margin-top: 10px; font-size: 0.76rem; min-height: 1.2em; }
+  .status.ok { color: var(--green); }
+  .status.err { color: var(--red); }
+  .empty-note { font-size: 0.78rem; color: var(--dim); text-align: center; padding: 6px 0; }
+</style>
+</head>
+<body>
+  <div class="logo"><img src="icon48.png"><span>Kit de Ferramentas p/ Landing Page</span></div>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="cores">🎨 Cores e Fontes</button>
+    <button class="tab-btn" data-tab="textos">📝 Títulos e Botões</button>
+    <button class="tab-btn" data-tab="share">🔗 Ao Compartilhar</button>
+    <button class="tab-btn" data-tab="rastreadores">👁 Rastreadores</button>
+  </div>
+
+  <!-- CORES E FONTES -->
+  <div class="panel active" id="panel-cores">
+    <p class="desc">Olha essa página e te mostra as cores e os tipos de letra que ela mais usa — bom pra copiar o estilo de um site que você gostou.</p>
+    <button class="primary" id="btn-cores">Analisar essa página</button>
+    <div class="result" id="result-cores"></div>
+  </div>
+
+  <!-- TITULOS E BOTOES -->
+  <div class="panel" id="panel-textos">
+    <p class="desc">Lista todos os títulos e textos de botão dessa página, prontos pra você estudar como ela convence o visitante a agir.</p>
+    <button class="primary" id="btn-textos">Analisar essa página</button>
+    <div class="result" id="result-textos"></div>
+  </div>
+
+  <!-- SHARE PREVIEW -->
+  <div class="panel" id="panel-share">
+    <p class="desc">Mostra como o link dessa página vai aparecer quando alguém colar no WhatsApp, Instagram ou Facebook — título, descrição e imagem.</p>
+    <button class="primary" id="btn-share">Analisar essa página</button>
+    <div class="result" id="result-share"></div>
+  </div>
+
+  <!-- RASTREADORES -->
+  <div class="panel" id="panel-rastreadores">
+    <p class="desc">Mostra quais empresas de anúncio (Facebook, Google, TikTok...) essa página deixa acompanhar quem visita ela.</p>
+    <button class="primary" id="btn-rastreadores">Analisar essa página</button>
+    <div class="result" id="result-rastreadores"></div>
+  </div>
+
+  <button class="secondary" id="btn-copiar" hidden>📋 Copiar resultado pro Claude</button>
+  <div class="status" id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
