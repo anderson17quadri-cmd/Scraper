@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>IG-Scraper Pro - Conector</title>
+<style>
+  :root {
+    --bg: #0a0a0f; --card: #14141c; --border: #232330; --text: #f4f4f6;
+    --dim: #9a9aae; --accent: #6366f1; --accent-2: #22d3ee;
+    --green: #4ade80; --red: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    width: 300px; margin: 0; padding: 16px;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .logo { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-weight: 700; font-size: 1rem; }
+  .logo img { width: 22px; height: 22px; border-radius: 6px; }
+  .logo span { background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  label { display: block; font-size: 0.72rem; color: var(--dim); margin-bottom: 4px; margin-top: 10px; }
+  select, input {
+    width: 100%; padding: 8px 10px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 0.85rem; outline: none;
+  }
+  button {
+    width: 100%; margin-top: 14px; padding: 10px; border: none; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff; font-weight: 700; font-size: 0.88rem; cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  #status {
+    margin-top: 12px; font-size: 0.78rem; line-height: 1.5; color: var(--dim);
+    min-height: 1.2em; word-break: break-word;
+  }
+  #status.ok { color: var(--green); }
+  #status.err { color: var(--red); }
+  .hint { font-size: 0.68rem; color: var(--dim); margin-top: 14px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <div class="logo"><img src="icon48.png"><span>IG-Scraper Pro</span></div>
+
+  <label for="engine">Motor</label>
+  <select id="engine">
+    <option value="instagrapi">Instagrapi (padrão)</option>
+    <option value="instaloader">Instaloader</option>
+  </select>
+
+  <label for="port">Porta do app (normalmente 5000)</label>
+  <input id="port" type="number" value="5000">
+
+  <button id="btn-conectar">Conectar essa conta</button>
+
+  <div id="status"></div>
+
+  <p class="hint">
+    Faz login em instagram.com nesse navegador primeiro. Isso lê os cookies
+    só dessa aba do navegador e manda pro IG-Scraper Pro rodando no seu PC --
+    nada sai da sua máquina.
+  </p>
+
+  <script src="popup.js"></script>
+</body>
+</html>
