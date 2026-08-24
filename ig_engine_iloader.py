@@ -162,13 +162,22 @@ def login_iloader_account(account: dict, session_file: str) -> instaloader.Insta
 
 def _http_download(url: str, path: str, speed_fn=None):
     t0 = time.perf_counter()
-    r = requests.get(url, stream=True, timeout=30)
-    r.raise_for_status()
-    size = 0
-    with open(path, "wb") as f:
-        for chunk in r.iter_content(8192):
-            f.write(chunk)
-            size += len(chunk)
+    # a CDN do Instagram (fbcdn.net) as vezes engasga numa conexao especifica
+    # e devolve "Read timed out" mesmo com a midia disponivel -- uma segunda
+    # tentativa quase sempre resolve, sem precisar re-buscar nada
+    for tentativa in (1, 2):
+        try:
+            r = requests.get(url, stream=True, timeout=30)
+            r.raise_for_status()
+            size = 0
+            with open(path, "wb") as f:
+                for chunk in r.iter_content(8192):
+                    f.write(chunk)
+                    size += len(chunk)
+            break
+        except requests.exceptions.RequestException:
+            if tentativa == 2:
+                raise
     if speed_fn:
         speed_fn(size, time.perf_counter() - t0)
 

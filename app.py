@@ -45,9 +45,16 @@ os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 
 # ─── DATABASE ─────────────────────────────────────────────────────────────────
+_DB_TIMEOUT = 15  # segundos que uma conexao espera por um lock antes de desistir
+
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=_DB_TIMEOUT)
     c = conn.cursor()
+    # WAL deixa leituras e escritas conviverem sem travar uma na outra --
+    # sem isso, os downloads simultaneos (modo "Maxima" velocidade) e o
+    # log de erros (que grava a cada resposta com erro) disputavam a
+    # mesma conexao/lock e estouravam com "database is locked" toda hora
+    c.execute("PRAGMA journal_mode=WAL")
     c.execute("""CREATE TABLE IF NOT EXISTS downloads (
         id INTEGER PRIMARY KEY AUTOINCREMENT, media_id TEXT UNIQUE,
         username TEXT, file TEXT, type TEXT, date TEXT, downloaded_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
@@ -62,7 +69,7 @@ def init_db():
     conn.close()
 
 def db_query(sql, params=(), fetch=True):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=_DB_TIMEOUT)
     c = conn.cursor()
     c.execute(sql, params)
     if fetch:
