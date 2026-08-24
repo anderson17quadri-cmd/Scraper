@@ -1598,40 +1598,45 @@ def _do_download_all(target_username, account_index):
             _register_failed(cl, tu, folder, downloader, failed, _item_id)
             all_saved.extend((p, subfolder) for p in saved)
 
-        # 1. POSTS
-        scrape_state["message"] = f"Buscando posts de @{tu}..."
-        _add_log(f"Buscando posts de @{tu}...")
+        # 1. REELS (antes dos posts de proposito: o Instagram devolve reels
+        # tambem dentro da grade normal de posts, entao se buscassemos
+        # posts primeiro eles ja cairiam la e o "ja baixado" faria os
+        # reels serem pulados na hora de baixar essa categoria de verdade
+        # -- baixando reels primeiro, o posts que roda depois pula so o
+        # que ja foi baixado aqui, sobrando so o que e post de verdade)
+        scrape_state["message"] = f"Buscando reels de @{tu}..."
+        _add_log(f"Buscando reels de @{tu}...")
         try:
             _eco = cfg.get("quality") == "eco"
             if engine == "instaloader":
                 profile = instaloader.Profile.from_username(cl.context, tu)
-                posts = list(itertools.islice(profile.get_posts(), cfg.get("posts_per_profile", 15)))
+                reels = [x for x in itertools.islice(profile.get_posts(), 60) if x.is_video]
                 downloader = lambda cl, tu, m, folder: _iloader_download_post(m, tu, folder, add_download, _add_log, _record_speed, eco=_eco)
             else:
                 uid = cl.user_id_from_username(tu)
-                posts = cl.user_medias(uid, amount=cfg.get("posts_per_profile", 15))
+                reels = list(cl.user_clips(uid, amount=PREVIEW_PAGE_SIZE))
                 downloader = _download_one
-            _baixa_categoria("posts", posts, f"{DOWNLOADS_DIR}/{tu}", downloader, "posts")
+            _baixa_categoria("reels", reels, f"{DOWNLOADS_DIR}/{tu}/reels", downloader, "reels")
         except Exception as e:
-            _add_log(f"Erro ao buscar posts: {_translate_any_error(e)}", "error")
+            _add_log(f"Erro ao buscar reels: {_translate_any_error(e)}", "error")
 
-        # 2. REELS
+        # 2. POSTS
         if not _stopped():
-            scrape_state["message"] = f"Buscando reels de @{tu}..."
-            _add_log(f"Buscando reels de @{tu}...")
+            scrape_state["message"] = f"Buscando posts de @{tu}..."
+            _add_log(f"Buscando posts de @{tu}...")
             try:
                 _eco = cfg.get("quality") == "eco"
                 if engine == "instaloader":
                     profile = instaloader.Profile.from_username(cl.context, tu)
-                    reels = [x for x in itertools.islice(profile.get_posts(), 60) if x.is_video]
+                    posts = list(itertools.islice(profile.get_posts(), cfg.get("posts_per_profile", 15)))
                     downloader = lambda cl, tu, m, folder: _iloader_download_post(m, tu, folder, add_download, _add_log, _record_speed, eco=_eco)
                 else:
                     uid = cl.user_id_from_username(tu)
-                    reels = list(cl.user_clips(uid, amount=PREVIEW_PAGE_SIZE))
+                    posts = cl.user_medias(uid, amount=cfg.get("posts_per_profile", 15))
                     downloader = _download_one
-                _baixa_categoria("reels", reels, f"{DOWNLOADS_DIR}/{tu}/reels", downloader, "reels")
+                _baixa_categoria("posts", posts, f"{DOWNLOADS_DIR}/{tu}", downloader, "posts")
             except Exception as e:
-                _add_log(f"Erro ao buscar reels: {_translate_any_error(e)}", "error")
+                _add_log(f"Erro ao buscar posts: {_translate_any_error(e)}", "error")
 
         # 3. STORIES (ativos, expiram em 24h -- pode nao ter nenhum)
         if not _stopped():
