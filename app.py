@@ -1957,6 +1957,21 @@ def api_reset():
     init_db()
     return jsonify({"ok": True})
 
+@app.route("/api/reset-profile", methods=["POST"])
+def api_reset_profile():
+    """Zera o historico de downloads so de UM perfil (diferente do
+    /api/reset, que apaga de todo mundo) -- pra quem quer baixar tudo de
+    novo de um perfil so (ex: depois de uma correcao no app, ou pra
+    reorganizar em pastas um download antigo) sem perder o "ja baixado"
+    dos outros perfis."""
+    data = request.get_json() or {}
+    username = (data.get("username") or "").strip().lstrip("@")
+    if not username:
+        return jsonify({"ok": False, "msg": "Informe o perfil"})
+    db_query("DELETE FROM downloads WHERE username=?", (username,), fetch=False)
+    db_query("DELETE FROM accounts_stats WHERE username=?", (username,), fetch=False)
+    return jsonify({"ok": True, "msg": f"Histórico de @{username} zerado"})
+
 @app.route("/downloads/<path:filename>")
 def serve_download(filename):
     return send_from_directory(DOWNLOADS_DIR, filename)

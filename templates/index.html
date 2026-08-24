@@ -685,6 +685,9 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
       <button class="btn btn-success btn-full" id="btn-download-all" style="margin-top:10px;" onclick="downloadAll()" hidden>
         <svg class="icon"><use href="#i-package"/></svg> Baixar tudo (posts, reels, stories e destaques num zip só)
       </button>
+      <button class="btn btn-ghost btn-full btn-xs" id="btn-zerar-baixar-tudo" style="margin-top:8px;" onclick="zerarEBaixarTudo()" hidden>
+        Zerar histórico desse perfil e baixar tudo de novo (organizado)
+      </button>
 
       <div id="highlight-back" hidden style="margin-bottom:8px;">
         <button class="btn btn-ghost btn-xs" onclick="backToHighlightsList()"><svg class="icon"><use href="#i-arrow-left"/></svg> Destaques</button>
@@ -1377,6 +1380,7 @@ function setModoBusca(modo) {
   // as abas Posts/Reels/Stories/Destaques so fazem sentido buscando por perfil
   $('preview-tabs').hidden = porLink || !previewTarget;
   $('btn-download-all').hidden = porLink || !previewTarget;
+  $('btn-zerar-baixar-tudo').hidden = porLink || !previewTarget;
   (porLink ? $('preview-url') : $('preview-target')).focus();
 }
 
@@ -1387,6 +1391,7 @@ async function buscarPorLink() {
   resetPreviewGrid();
   $('preview-tabs').hidden = true;
   $('btn-download-all').hidden = true;
+  $('btn-zerar-baixar-tudo').hidden = true;
   $('btn-url-load').disabled = true;
   $('preview-grid').innerHTML = '<div class="empty"><p>Abrindo link...</p></div>';
 
@@ -1433,6 +1438,7 @@ async function searchProfile() {
   $('highlights-list').hidden = true;
   $('preview-tabs').hidden = false;
   $('btn-download-all').hidden = false;
+  $('btn-zerar-baixar-tudo').hidden = false;
   setActiveTab('posts');
   await loadPostsPreview();
 }
@@ -1458,6 +1464,16 @@ async function downloadAll() {
   const r = await api('/api/download-all', {method:'POST', body:JSON.stringify(previewAccountBody())});
   if (!r.ok) return toast(r.msg || 'Erro', 'err');
   toast(r.msg);
+}
+
+async function zerarEBaixarTudo() {
+  if (!previewTarget) return;
+  if (!confirm(`Isso apaga o histórico de downloads de @${previewTarget} (só desse perfil, os outros não são afetados) e baixa tudo de novo do zero, já organizado em pastas. Continuar?`)) return;
+  const rz = await api('/api/reset-profile', {method:'POST', body:JSON.stringify({username: previewTarget})});
+  if (!rz.ok) return toast(rz.msg || 'Erro ao zerar histórico', 'err');
+  const r = await api('/api/download-all', {method:'POST', body:JSON.stringify(previewAccountBody())});
+  if (!r.ok) return toast(r.msg || 'Erro', 'err');
+  toast(`Histórico zerado -- ${r.msg}`);
 }
 
 function setActiveTab(mode) {
