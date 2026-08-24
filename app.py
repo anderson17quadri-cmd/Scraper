@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_from_directory, Response
 from ig_auth import login_account, login_by_sessionid, translate_ig_error
 from ig_engine_iloader import (login_iloader_account, login_iloader_sessionid, translate_iloader_error,
+                               _parse_cookies as _parse_cookie_string,
                                post_preview_item as _iloader_preview_item,
                                download_post as _iloader_download_post,
                                story_preview_item as _iloader_story_item,
@@ -826,21 +827,31 @@ def api_login():
     scrape_state["current_account"] = username
     return jsonify({"ok": True, "msg": f"Conectado como @{username}", "username": username})
 
-def _do_session_login(raw_session, engine, save_sessionid=None):
-    """Loga por sessao (sessionid puro ou string de cookies inteira) e
-    salva a conta. Compartilhado entre login manual e importacao direto
-    do navegador -- save_sessionid e o valor gravado em accounts.json
-    (pode ser so o sessionid, mesmo quando o login usou mais cookies)."""
+def _do_session_login(raw_session, engine):
+    """Loga por sessao -- aceita tanto so o sessionid quanto a string de
+    cookies inteira (formato "nome=valor; nome2=valor2") em qualquer um
+    dos dois motores. Compartilhado entre login manual, importacao do
+    navegador local e a extensao do Chrome.
+
+    O motor Instagrapi so aceita o VALOR PURO do sessionid (a lib faz
+    um assert que quebra se receber a string de cookies inteira) -- por
+    isso sempre extrai so o sessionid antes de passar pra ele, mesmo
+    que o chamador tenha mandado a string toda. O Instaloader aceita os
+    dois formatos direto (quanto mais cookies, mais confiavel)."""
     if engine == "instaloader":
         L = login_iloader_sessionid(raw_session)
         username = L.context.username
         L.save_session_to_file(f"{SESSIONS_DIR}/{username}.iloader")
+        sessionid = _parse_cookie_string(raw_session).get("sessionid", raw_session)
     else:
-        cl = login_by_sessionid(raw_session)
+        sessionid = _parse_cookie_string(raw_session).get("sessionid")
+        if not sessionid:
+            raise ValueError("Nao encontrei o sessionid no valor colado")
+        cl = login_by_sessionid(sessionid)
         username = cl.username
         cl.dump_settings(f"{SESSIONS_DIR}/{username}.json")
 
-    upsert_account(username, sessionid=save_sessionid or raw_session, engine=engine)
+    upsert_account(username, sessionid=sessionid, engine=engine)
 
     global scrape_state
     scrape_state["connected"] = True
@@ -931,7 +942,7 @@ def api_login_browser():
     try:
         cookies = _cookies_from_browser(browser)
         raw = "; ".join(f"{k}={v}" for k, v in cookies.items())
-        username = _do_session_login(raw, engine, save_sessionid=cookies["sessionid"])
+        username = _do_session_login(raw, engine)
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e) if isinstance(e, (RuntimeError, ValueError)) else _translate_any_error(e)})
 
