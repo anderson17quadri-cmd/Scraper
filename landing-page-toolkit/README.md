@@ -1,11 +1,11 @@
 # Kit de Ferramentas para Landing Page
 
-Extensão com 15 ferramentas simples pra analisar, testar e apresentar
+Extensão com 16 ferramentas simples pra analisar, testar e apresentar
 qualquer página, em linguagem direta — sem termo técnico difícil. Cada
 ferramenta tem um botão pra copiar o resultado e colar numa conversa com
 o Claude.
 
-## As 15 ferramentas
+## As 16 ferramentas
 
 ### Estudar a concorrência
 1. **Cores e Fontes** — mostra as cores e os tipos de letra que a
@@ -43,6 +43,12 @@ o Claude.
 15. **Mockup em Dispositivo** — tira um print da página e coloca dentro
     de uma moldura de celular, pronta pra postar ou mandar pro cliente.
 
+### Migrar loja antiga
+16. **Extrair Produtos da Loja** — vai juntando os produtos (nome,
+    preço, descrição, foto) de cada página que você visita, e no final
+    baixa tudo num CSV pronto pra importar numa loja nova. Use só em
+    loja sua, ou de um cliente que te contratou pra fazer a migração.
+
 ## Como instalar
 
 1. Abra `chrome://extensions` (ou `edge://extensions`) no navegador.
@@ -78,3 +84,9 @@ remover nada: só clique no ícone de recarregar no card da extensão em
 - **Mockup em Dispositivo** e **Antes e Depois** geram imagens; pra
   levar pro Claude, salve a imagem (clique direito → "Salvar imagem
   como...") e anexe na conversa.
+- **Extrair Produtos da Loja** também guarda os dados só nesse
+  navegador até você clicar em "Baixar planilha". Ela tenta reconhecer
+  produtos automaticamente (funciona melhor em lojas Shopify,
+  WooCommerce e a maioria das plataformas brasileiras); se não achar
+  nada numa página, tenta abrir uma página de categoria ou de produto
+  específico.

@@ -666,3 +666,200 @@ ACOES["mockup"] = (btn) =>
     prepararCopiar("Criei um mockup dessa página dentro de uma moldura de celular. A imagem fica só aqui na extensão -- pra mandar pro Claude, salve a imagem e anexe na conversa.");
     setStatus("✓ Mockup criado.", "ok");
   });
+
+// ─── 16. EXTRAIR PRODUTOS DA LOJA ───────────────────────────────────────────
+function _extrairProdutos() {
+  const produtos = [];
+  const vistos = new Set();
+
+  function addProduto(p) {
+    const nome = (p.nome || "").trim();
+    if (!nome) return;
+    const preco = (p.preco || "").toString().trim().replace(/^r\$\s*/i, "");
+    const linkReal = p.link && p.link !== location.href ? p.link : "";
+    // a chave sempre leva o nome, e usa o link (ou a imagem) so como criterio extra --
+    // assim dois produtos diferentes com o mesmo preco e sem link individual nao se misturam
+    const chave = nome + "|" + preco + "|" + (linkReal || p.imagem || "");
+    if (vistos.has(chave)) return;
+    vistos.add(chave);
+    produtos.push({
+      nome,
+      preco,
+      descricao: (p.descricao || "").trim().slice(0, 300),
+      imagem: p.imagem || "",
+      link: p.link || location.href,
+    });
+  }
+
+  // 1) dados estruturados (JSON-LD) -- a maioria das plataformas de loja usa isso pro Google
+  document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
+    try {
+      const data = JSON.parse(script.textContent);
+      const itens = Array.isArray(data) ? data : data["@graph"] || [data];
+      itens.forEach((item) => {
+        if (!item) return;
+        const tipo = item["@type"];
+        const ehProduto = tipo === "Product" || (Array.isArray(tipo) && tipo.includes("Product"));
+        if (!ehProduto) return;
+        const oferta = Array.isArray(item.offers) ? item.offers[0] : item.offers;
+        addProduto({
+          nome: item.name,
+          preco: oferta ? oferta.price || (oferta.priceSpecification && oferta.priceSpecification.price) : "",
+          descricao: item.description,
+          imagem: Array.isArray(item.image) ? item.image[0] : item.image,
+          link: item.url || location.href,
+        });
+      });
+    } catch (e) {}
+  });
+
+  // 2) microdados (itemtype Product) -- outra forma comum de marcar produto
+  if (produtos.length === 0) {
+    document.querySelectorAll('[itemtype*="Product"]').forEach((el) => {
+      const prop = (name) => el.querySelector(`[itemprop="${name}"]`);
+      const nomeEl = prop("name");
+      const precoEl = el.querySelector('[itemprop="price"]');
+      const imgEl = prop("image");
+      const linkEl = el.closest("a") || el.querySelector("a");
+      addProduto({
+        nome: nomeEl ? nomeEl.getAttribute("content") || nomeEl.textContent : "",
+        preco: precoEl ? precoEl.getAttribute("content") || precoEl.textContent : "",
+        descricao: (prop("description") || {}).textContent,
+        imagem: imgEl ? imgEl.getAttribute("content") || imgEl.src : "",
+        link: linkEl ? linkEl.href : location.href,
+      });
+    });
+  }
+
+  // 3) grade de produtos (cartões com classe "product"/"produto") -- quando a loja nao tem os dados acima
+  if (produtos.length === 0) {
+    document.querySelectorAll('[class*="product" i], [class*="produto" i]').forEach((el) => {
+      const sub = el.querySelectorAll('[class*="product" i], [class*="produto" i]').length;
+      if (sub > 3) return; // e um container grande demais, nao um cartao individual
+      const tituloEl = el.querySelector('h1,h2,h3,h4,[class*="title" i],[class*="nome" i],[class*="name" i]');
+      const precoEl = el.querySelector('[class*="price" i],[class*="preco" i]');
+      const imgEl = el.querySelector("img");
+      const linkEl = el.tagName === "A" ? el : el.closest("a") || el.querySelector("a");
+      if (!tituloEl) return;
+      addProduto({
+        nome: tituloEl.textContent,
+        preco: precoEl ? precoEl.textContent : "",
+        descricao: "",
+        imagem: imgEl ? imgEl.src : "",
+        link: linkEl ? linkEl.href : location.href,
+      });
+    });
+  }
+
+  // 4) pagina de produto unico, sem nenhuma marcacao especial -- usa as tags de compartilhamento
+  if (produtos.length === 0) {
+    const get = (sel) => document.querySelector(sel)?.getAttribute("content") || null;
+    const nome = get('meta[property="og:title"]') || document.title;
+    const preco = get('meta[property="product:price:amount"]') || get('meta[property="og:price:amount"]');
+    const imagem = get('meta[property="og:image"]');
+    const descricao = get('meta[property="og:description"]') || get('meta[name="description"]');
+    if (nome) addProduto({ nome, preco, descricao, imagem, link: location.href });
+  }
+
+  return { produtos, url: location.href, titulo: document.title };
+}
+
+async function _produtosCarregar() {
+  const { produtosLoja } = await chrome.storage.local.get({ produtosLoja: [] });
+  return produtosLoja;
+}
+
+function _csvEscapar(v) {
+  const s = (v == null ? "" : String(v)).replace(/"/g, '""');
+  return `"${s}"`;
+}
+
+async function _produtosRenderizar() {
+  const lista = await _produtosCarregar();
+  $("produtos-contagem").textContent = lista.length;
+  const box = $("lista-produtos");
+  if (!lista.length) {
+    box.innerHTML = `<p class="empty-note">Nenhum produto guardado ainda.</p>`;
+    return;
+  }
+  box.innerHTML = lista
+    .map(
+      (p, i) => `<div class="colecao-item">
+        ${p.imagem ? `<img src="${p.imagem}">` : `<div style="width:36px;height:36px;border-radius:6px;background:#222;flex-shrink:0;"></div>`}
+        <div class="info"><b>${p.nome}</b>${p.preco ? "R$ " + p.preco : "(sem preço)"}</div>
+        <button class="del" data-del-produto="${i}" title="Remover">✕</button>
+      </div>`
+    )
+    .join("");
+}
+
+ACOES["produtos-extrair"] = (btn) =>
+  executarAcao(btn, "result-produtos", async () => {
+    const r = await rodarNaPagina(_extrairProdutos);
+    const lista = await _produtosCarregar();
+    const antes = lista.length;
+    const chaveDe = (p) => p.nome + "|" + (p.preco || "") + "|" + (p.link || p.imagem || "");
+    const chavesExistentes = new Set(lista.map(chaveDe));
+    r.produtos.forEach((p) => {
+      const chave = chaveDe(p);
+      if (!chavesExistentes.has(chave)) {
+        chavesExistentes.add(chave);
+        lista.push(p);
+      }
+    });
+    await chrome.storage.local.set({ produtosLoja: lista });
+    const novos = lista.length - antes;
+    $("result-produtos").innerHTML = novos
+      ? `<div class="result-box">✓ Achei ${r.produtos.length} produto(s) nessa página, ${novos} novo(s) foram adicionados à lista.</div>`
+      : r.produtos.length
+      ? `<div class="result-box">Todos os ${r.produtos.length} produto(s) dessa página já estavam na lista.</div>`
+      : `<div class="result-box warn">⚠ Não consegui reconhecer produtos automaticamente nessa página. Tenta abrir uma página de categoria ou de um produto específico.</div>`;
+    await _produtosRenderizar();
+  });
+
+ACOES["produtos-csv"] = (btn) =>
+  executarAcao(btn, "result-produtos", async () => {
+    const lista = await _produtosCarregar();
+    if (!lista.length) {
+      setStatus("A lista está vazia -- extraia produtos antes de baixar.", "err");
+      return;
+    }
+    const cabecalho = ["Nome", "Preco", "Descricao", "Imagem (URL)", "Link"];
+    const linhas = lista.map((p) => [p.nome, p.preco, p.descricao, p.imagem, p.link].map(_csvEscapar).join(","));
+    const csv = "﻿" + [cabecalho.map(_csvEscapar).join(","), ...linhas].join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "produtos-da-loja.csv";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setStatus(`✓ Baixado com ${lista.length} produto(s).`, "ok");
+    prepararCopiar(
+      `Produtos extraídos pra migração de loja (${lista.length}):\n\n` +
+        lista.map((p) => `- ${p.nome} — R$ ${p.preco || "?"} — ${p.link}`).join("\n")
+    );
+  });
+
+ACOES["produtos-limpar"] = (btn) =>
+  executarAcao(btn, "result-produtos", async () => {
+    await chrome.storage.local.set({ produtosLoja: [] });
+    $("result-produtos").innerHTML = "";
+    await _produtosRenderizar();
+  });
+
+document.addEventListener("click", async (ev) => {
+  const del = ev.target.closest("[data-del-produto]");
+  if (!del) return;
+  const idx = parseInt(del.dataset.delProduto, 10);
+  const lista = await _produtosCarregar();
+  lista.splice(idx, 1);
+  await chrome.storage.local.set({ produtosLoja: lista });
+  await _produtosRenderizar();
+});
+
+document.querySelector('[data-tool="produtos"]').addEventListener("click", () => {
+  _produtosRenderizar();
+});
