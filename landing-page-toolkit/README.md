@@ -45,8 +45,9 @@ o Claude.
 
 ### Migrar loja antiga
 16. **Extrair Produtos da Loja** — vai juntando os produtos (nome,
-    preço, descrição, foto) de cada página que você visita, e no final
-    baixa tudo num CSV pronto pra importar numa loja nova. Use só em
+    preço, descrição, foto) de cada página que você visita. No final,
+    baixa um CSV com os dados, ou um ZIP com o CSV **e os arquivos das
+    fotos de verdade**, pronto pra importar numa loja nova. Use só em
     loja sua, ou de um cliente que te contratou pra fazer a migração.
 
 ## Como instalar
@@ -57,9 +58,13 @@ o Claude.
 4. Selecione esta pasta (`landing-page-toolkit`).
 5. Pronto — aparece o ícone na barra de extensões.
 
-Se já tinha instalado antes (versão com só 4 ferramentas), não precisa
-remover nada: só clique no ícone de recarregar no card da extensão em
-`chrome://extensions`.
+Se já tinha instalado antes, não precisa remover nada: só clique no
+ícone de recarregar no card da extensão em `chrome://extensions`. A
+partir dessa versão o Chrome vai pedir uma autorização nova ("Ler e
+alterar todos os seus dados em todos os sites") — é porque a
+ferramenta "Extrair Produtos da Loja" agora baixa as fotos de verdade
+de qualquer loja, e pra isso precisa de acesso a qualquer site (não é
+usado por nenhuma outra ferramenta).
 
 ## Como usar
 
@@ -85,8 +90,10 @@ remover nada: só clique no ícone de recarregar no card da extensão em
   levar pro Claude, salve a imagem (clique direito → "Salvar imagem
   como...") e anexe na conversa.
 - **Extrair Produtos da Loja** também guarda os dados só nesse
-  navegador até você clicar em "Baixar planilha". Ela tenta reconhecer
-  produtos automaticamente (funciona melhor em lojas Shopify,
-  WooCommerce e a maioria das plataformas brasileiras); se não achar
-  nada numa página, tenta abrir uma página de categoria ou de produto
-  específico.
+  navegador até você clicar em algum botão de baixar. Ela tenta
+  reconhecer produtos automaticamente (funciona melhor em lojas
+  Shopify, WooCommerce e a maioria das plataformas brasileiras); se
+  não achar nada numa página, tenta abrir uma página de categoria ou
+  de produto específico. Se alguma foto não puder ser baixada (link
+  expirado, loja bloqueando), ela avisa quantas falharam e mesmo assim
+  entrega o CSV com o link de cada uma.

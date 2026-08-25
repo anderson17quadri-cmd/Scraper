@@ -843,6 +843,67 @@ ACOES["produtos-csv"] = (btn) =>
     );
   });
 
+function _nomeArquivoSeguro(nome, i) {
+  const limpo = (nome || "produto").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
+  return `${String(i + 1).padStart(3, "0")}-${limpo || "produto"}`;
+}
+
+function _extensaoDaImagem(url, contentType) {
+  if (contentType && contentType.includes("/")) {
+    const ext = contentType.split("/")[1].split(";")[0].trim();
+    if (ext && ext.length <= 5) return ext === "jpeg" ? "jpg" : ext;
+  }
+  const m = (url || "").match(/\.(jpg|jpeg|png|webp|gif|avif)(\?|#|$)/i);
+  return m ? m[1].toLowerCase() : "jpg";
+}
+
+ACOES["produtos-zip"] = (btn) =>
+  executarAcao(btn, "result-produtos", async () => {
+    const lista = await _produtosCarregar();
+    if (!lista.length) {
+      setStatus("A lista está vazia -- extraia produtos antes de baixar.", "err");
+      return;
+    }
+    const zip = new JSZip();
+    const pastaFotos = zip.folder("fotos");
+    let ok = 0;
+    let falhou = 0;
+    for (let i = 0; i < lista.length; i++) {
+      const p = lista[i];
+      setStatus(`Baixando foto ${i + 1} de ${lista.length}...`);
+      if (!p.imagem) { falhou++; continue; }
+      try {
+        const resp = await fetch(p.imagem);
+        if (!resp.ok) throw new Error("status " + resp.status);
+        const blob = await resp.blob();
+        const ext = _extensaoDaImagem(p.imagem, blob.type);
+        pastaFotos.file(`${_nomeArquivoSeguro(p.nome, i)}.${ext}`, blob);
+        ok++;
+      } catch (e) {
+        falhou++;
+      }
+    }
+    const cabecalho = ["Nome", "Preco", "Descricao", "Imagem (URL)", "Link"];
+    const linhas = lista.map((p) => [p.nome, p.preco, p.descricao, p.imagem, p.link].map(_csvEscapar).join(","));
+    const csv = "﻿" + [cabecalho.map(_csvEscapar).join(","), ...linhas].join("\r\n");
+    zip.file("produtos.csv", csv);
+
+    setStatus("Montando o arquivo ZIP...");
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "produtos-da-loja.zip";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+    $("result-produtos").innerHTML = falhou
+      ? `<div class="result-box warn">✓ Baixei ${ok} foto(s). ${falhou} não consegui baixar (o link pode ter expirado ou a loja bloqueia o download direto) -- essas ficaram só com o link na planilha.</div>`
+      : `<div class="result-box">✓ Baixei as ${ok} fotos certinho, junto com a planilha, tudo dentro do ZIP.</div>`;
+  });
+
 ACOES["produtos-limpar"] = (btn) =>
   executarAcao(btn, "result-produtos", async () => {
     await chrome.storage.local.set({ produtosLoja: [] });
