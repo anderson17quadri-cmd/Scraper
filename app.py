@@ -217,6 +217,135 @@ def _translate_any_error(e):
 def _safe_name(s):
     return re.sub(r'[^\w\-. ]', '_', str(s)).strip()[:60] or "destaque"
 
+_RE_EMAIL = re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}')
+_RE_WHATSAPP_LINK = re.compile(r'(?:wa\.me/|api\.whatsapp\.com/send\?phone=)\+?(\d{8,15})')
+_RE_TELEFONE = re.compile(
+    r'(?:\+?\d{1,3}[\s.-]?)?'   # DDI opcional, ex: +55
+    r'\(?\d{2,3}\)?[\s.-]?'     # DDD, com ou sem parenteses
+    r'\d{4,5}[\s.-]?\d{4}'      # numero: 4-5 digitos + separador opcional + 4 digitos
+)
+
+def _extrair_contatos_do_texto(*textos):
+    """Procura e-mail, link de WhatsApp e telefone dentro de qualquer texto
+    (bio, site, links da bio) -- muita gente coloca o contato direto ali
+    em vez de usar os campos "oficiais" do Instagram."""
+    texto_completo = " ".join(t for t in textos if t)
+    emails = sorted(set(_RE_EMAIL.findall(texto_completo)))
+    whats_digitos = sorted(set(_RE_WHATSAPP_LINK.findall(texto_completo)))
+    whats_set = set(whats_digitos)
+    telefones, vistos = [], set()
+    for bruto in _RE_TELEFONE.findall(texto_completo):
+        digitos = re.sub(r'\D', '', bruto)
+        if len(digitos) < 8 or digitos in vistos or digitos in whats_set:
+            continue
+        vistos.add(digitos)
+        telefones.append(bruto.strip())
+    return {"emails": emails, "whatsapp": whats_digitos, "telefones": telefones}
+
+def _coletar_info_perfil(engine, cl, username):
+    """Junta tudo que da pra saber publicamente sobre o perfil -- nome,
+    bio, site, categoria, seguidores -- pra virar o arquivo perfil.txt e
+    a telinha de "informacoes do perfil"."""
+    if engine == "instaloader":
+        profile = instaloader.Profile.from_username(cl.context, username)
+        bio = profile.biography or ""
+        site = profile.external_url or ""
+        info = {
+            "username": profile.username,
+            "nome_completo": profile.full_name or "",
+            "bio": bio,
+            "site": site,
+            "categoria": profile.business_category_name or "",
+            "seguidores": profile.followers,
+            "seguindo": profile.followees,
+            "publicacoes": profile.mediacount,
+            "privado": bool(profile.is_private),
+            "verificado": bool(profile.is_verified),
+            "comercial": bool(profile.is_business_account),
+            "email_estruturado": "",
+            "telefone_estruturado": "",
+            "links_na_bio": [],
+        }
+    else:
+        uid = cl.user_id_from_username(username)
+        u = cl.user_info(uid)
+        bio = u.biography or ""
+        site = str(u.external_url) if u.external_url else ""
+        telefone_estruturado = ""
+        if u.public_phone_number:
+            ddi = f"+{u.public_phone_country_code} " if u.public_phone_country_code else ""
+            telefone_estruturado = f"{ddi}{u.public_phone_number}"
+        links_na_bio = [str(l.url) for l in (u.bio_links or []) if getattr(l, "url", None)]
+        info = {
+            "username": u.username,
+            "nome_completo": u.full_name or "",
+            "bio": bio,
+            "site": site,
+            "categoria": u.business_category_name or u.category_name or "",
+            "seguidores": u.follower_count,
+            "seguindo": u.following_count,
+            "publicacoes": u.media_count,
+            "privado": bool(u.is_private),
+            "verificado": bool(u.is_verified),
+            "comercial": bool(u.is_business),
+            "email_estruturado": u.public_email or "",
+            "telefone_estruturado": telefone_estruturado,
+            "links_na_bio": links_na_bio,
+        }
+    contatos = _extrair_contatos_do_texto(bio, site, info["email_estruturado"], " ".join(info["links_na_bio"]))
+    info["emails_na_bio"] = [e for e in contatos["emails"] if e != info["email_estruturado"]]
+    info["whatsapp_na_bio"] = contatos["whatsapp"]
+    info["telefones_na_bio"] = contatos["telefones"]
+    return info
+
+def _formatar_info_perfil_txt(info):
+    L = []
+    L.append(f"Perfil: @{info['username']}")
+    if info["nome_completo"]:
+        L.append(f"Nome: {info['nome_completo']}")
+    L.append("")
+    L.append("--- Biografia ---")
+    L.append(info["bio"] or "(sem biografia)")
+    L.append("")
+    L.append("--- Contato encontrado ---")
+    tem_contato = False
+    if info["site"]:
+        L.append(f"Site: {info['site']}")
+        tem_contato = True
+    if info["email_estruturado"]:
+        L.append(f"E-mail (do perfil): {info['email_estruturado']}")
+        tem_contato = True
+    if info["telefone_estruturado"]:
+        L.append(f"Telefone (do perfil): {info['telefone_estruturado']}")
+        tem_contato = True
+    for e in info["emails_na_bio"]:
+        L.append(f"E-mail (achado na bio): {e}")
+        tem_contato = True
+    for w in info["whatsapp_na_bio"]:
+        L.append(f"WhatsApp (achado na bio): +{w}")
+        tem_contato = True
+    for t in info["telefones_na_bio"]:
+        L.append(f"Telefone (achado na bio): {t}")
+        tem_contato = True
+    for link in info["links_na_bio"]:
+        if link != info["site"]:
+            L.append(f"Link na bio: {link}")
+            tem_contato = True
+    if not tem_contato:
+        L.append("Nao encontrei site, telefone/WhatsApp nem e-mail nesse perfil.")
+    L.append("")
+    L.append("--- Numeros ---")
+    L.append(f"Categoria: {info['categoria'] or '(nao informada)'}")
+    L.append(f"Seguidores: {info['seguidores']}")
+    L.append(f"Seguindo: {info['seguindo']}")
+    L.append(f"Publicacoes: {info['publicacoes']}")
+    L.append(f"Conta privada: {'Sim' if info['privado'] else 'Nao'}")
+    L.append(f"Verificado: {'Sim' if info['verificado'] else 'Nao'}")
+    L.append(f"Conta comercial: {'Sim' if info['comercial'] else 'Nao'}")
+    L.append("")
+    L.append(f"Gerado por IG-Scraper Pro em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    return "\n".join(L)
+
 def _highlight_cover_url(cover):
     """cover_media do Highlight vem como dict cru da API do Instagram, nao
     como objeto Media -- tenta achar a url da imagem em algumas chaves
@@ -1562,6 +1691,29 @@ def api_download_all():
     threading.Thread(target=_do_download_all, args=(target_username, data.get("account_index")), daemon=True).start()
     return jsonify({"ok": True, "msg": f"Baixando tudo de @{target_username}..."})
 
+@app.route("/api/profile-info", methods=["POST"])
+def api_profile_info():
+    """Busca bio, site, telefone/WhatsApp e e-mail do perfil (sem baixar
+    midia nenhuma) e ja salva um perfil.txt pronto pra baixar."""
+    data = request.get_json() or {}
+    target_username = (data.get("target_username") or "").strip().lstrip("@")
+    if not target_username:
+        return jsonify({"ok": False, "msg": "Informe o perfil alvo"})
+    try:
+        engine, cl = _get_client(data.get("account_index"))
+    except Exception as e:
+        return jsonify({"ok": False, "msg": _translate_any_error(e)})
+    try:
+        info = _coletar_info_perfil(engine, cl, target_username)
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Erro ao buscar informacoes de @{target_username}: {_translate_any_error(e)}"})
+    texto = _formatar_info_perfil_txt(info)
+    folder = f"{DOWNLOADS_DIR}/{target_username}"
+    os.makedirs(folder, exist_ok=True)
+    with open(f"{folder}/perfil.txt", "w", encoding="utf-8") as f:
+        f.write(texto)
+    return jsonify({"ok": True, "info": info, "url": f"/downloads/{target_username}/perfil.txt"})
+
 def _do_download_all(target_username, account_index):
     global scrape_state
     tu = target_username
@@ -1586,6 +1738,23 @@ def _do_download_all(target_username, account_index):
         scrape_state["connected"] = True
         scrape_state["current_account"] = account_label
         cfg = get_cfg()
+
+        # 0. INFORMACOES DO PERFIL (bio, site, telefone/WhatsApp, e-mail...)
+        # -- roda rapido antes de tudo; se falhar, nao impede o resto do
+        # download de acontecer normalmente
+        scrape_state["message"] = f"Buscando informacoes de @{tu}..."
+        try:
+            info = _coletar_info_perfil(engine, cl, tu)
+            texto_perfil = _formatar_info_perfil_txt(info)
+            folder_perfil = f"{DOWNLOADS_DIR}/{tu}"
+            os.makedirs(folder_perfil, exist_ok=True)
+            txt_path = f"{folder_perfil}/perfil.txt"
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(texto_perfil)
+            all_saved.append((txt_path, None))
+            _add_log(f"Informacoes de @{tu} salvas em texto (perfil.txt)")
+        except Exception as e:
+            _add_log(f"Erro ao buscar informacoes do perfil: {_translate_any_error(e)}", "error")
 
         def _baixa_categoria(nome, medias, folder, downloader, subfolder):
             if _stopped():

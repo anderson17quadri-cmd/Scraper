@@ -688,6 +688,10 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
       <button class="btn btn-ghost btn-full btn-xs" id="btn-zerar-baixar-tudo" style="margin-top:8px;" onclick="zerarEBaixarTudo()" hidden>
         Zerar histórico desse perfil e baixar tudo de novo (organizado)
       </button>
+      <button class="btn btn-ghost btn-full btn-xs" id="btn-info-perfil" style="margin-top:8px;" onclick="verInfoPerfil()" hidden>
+        <svg class="icon"><use href="#i-globe"/></svg> Ver informações do perfil (bio, site, WhatsApp, e-mail)
+      </button>
+      <div id="info-perfil-card" class="card" style="margin-top:8px;" hidden></div>
 
       <div id="highlight-back" hidden style="margin-bottom:8px;">
         <button class="btn btn-ghost btn-xs" onclick="backToHighlightsList()"><svg class="icon"><use href="#i-arrow-left"/></svg> Destaques</button>
@@ -1381,6 +1385,7 @@ function setModoBusca(modo) {
   $('preview-tabs').hidden = porLink || !previewTarget;
   $('btn-download-all').hidden = porLink || !previewTarget;
   $('btn-zerar-baixar-tudo').hidden = porLink || !previewTarget;
+  $('btn-info-perfil').hidden = porLink || !previewTarget;
   (porLink ? $('preview-url') : $('preview-target')).focus();
 }
 
@@ -1392,6 +1397,8 @@ async function buscarPorLink() {
   $('preview-tabs').hidden = true;
   $('btn-download-all').hidden = true;
   $('btn-zerar-baixar-tudo').hidden = true;
+  $('btn-info-perfil').hidden = true;
+  $('info-perfil-card').hidden = true;
   $('btn-url-load').disabled = true;
   $('preview-grid').innerHTML = '<div class="empty"><p>Abrindo link...</p></div>';
 
@@ -1439,6 +1446,8 @@ async function searchProfile() {
   $('preview-tabs').hidden = false;
   $('btn-download-all').hidden = false;
   $('btn-zerar-baixar-tudo').hidden = false;
+  $('btn-info-perfil').hidden = false;
+  $('info-perfil-card').hidden = true;
   setActiveTab('posts');
   await loadPostsPreview();
 }
@@ -1474,6 +1483,41 @@ async function zerarEBaixarTudo() {
   const r = await api('/api/download-all', {method:'POST', body:JSON.stringify(previewAccountBody())});
   if (!r.ok) return toast(r.msg || 'Erro', 'err');
   toast(`Histórico zerado -- ${r.msg}`);
+}
+
+async function verInfoPerfil() {
+  if (!previewTarget) return;
+  const card = $('info-perfil-card');
+  card.hidden = false;
+  card.innerHTML = '<p class="card-sub">Buscando informações de @' + previewTarget + '...</p>';
+  const r = await api('/api/profile-info', {method:'POST', body:JSON.stringify(previewAccountBody())});
+  if (!r.ok) {
+    card.innerHTML = '<p class="card-sub">' + r.msg + '</p>';
+    return toast(r.msg, 'err');
+  }
+  const i = r.info;
+  const linha = (label, valor) => valor ? `<p><b>${label}:</b> ${valor}</p>` : '';
+  let contatoHtml = '';
+  if (i.site) contatoHtml += linha('Site', `<a href="${i.site}" target="_blank" rel="noopener">${i.site}</a>`);
+  if (i.email_estruturado) contatoHtml += linha('E-mail', i.email_estruturado);
+  if (i.telefone_estruturado) contatoHtml += linha('Telefone', i.telefone_estruturado);
+  (i.emails_na_bio || []).forEach(e => contatoHtml += linha('E-mail (na bio)', e));
+  (i.whatsapp_na_bio || []).forEach(w => contatoHtml += linha('WhatsApp (na bio)', '+' + w));
+  (i.telefones_na_bio || []).forEach(t => contatoHtml += linha('Telefone (na bio)', t));
+  (i.links_na_bio || []).forEach(l => { if (l !== i.site) contatoHtml += linha('Link na bio', `<a href="${l}" target="_blank" rel="noopener">${l}</a>`); });
+  if (!contatoHtml) contatoHtml = '<p class="card-sub">Não encontrei site, telefone/WhatsApp nem e-mail nesse perfil.</p>';
+
+  card.innerHTML = `
+    <div class="card-header"><span class="card-title">@${i.username}${i.nome_completo ? ' -- ' + i.nome_completo : ''}</span></div>
+    <p class="card-sub" style="white-space:pre-wrap;">${i.bio || '(sem biografia)'}</p>
+    <div style="margin-top:8px;">${contatoHtml}</div>
+    <p class="card-sub" style="margin-top:8px;">
+      ${i.seguidores ?? '?'} seguidores · ${i.seguindo ?? '?'} seguindo · ${i.publicacoes ?? '?'} publicações
+      ${i.comercial ? ' · Conta comercial' : ''}${i.verificado ? ' · Verificado' : ''}${i.privado ? ' · Privado' : ''}
+    </p>
+    <a class="btn btn-ghost btn-xs btn-full" style="margin-top:8px;" href="${r.url}" download target="_blank">
+      <svg class="icon"><use href="#i-download"/></svg> Baixar essas informações em .txt
+    </a>`;
 }
 
 function setActiveTab(mode) {
