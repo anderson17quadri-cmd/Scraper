@@ -346,6 +346,45 @@ def _formatar_info_perfil_txt(info):
     L.append(f"Gerado por IG-Scraper Pro em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
     return "\n".join(L)
 
+def _extrair_legenda_data(m, engine):
+    """Devolve (data_formatada, legenda) de um post/reel -- funciona tanto
+    com o objeto Media do instagrapi quanto o Post do Instaloader."""
+    if engine == "instaloader":
+        legenda = (getattr(m, "caption", None) or "").strip()
+        data = getattr(m, "date_utc", None)
+    else:
+        legenda = (getattr(m, "caption_text", None) or "").strip()
+        data = getattr(m, "taken_at", None)
+    data_str = data.strftime("%d/%m/%Y %H:%M") if data else "data desconhecida"
+    return data_str, legenda
+
+def _montar_descricoes_txt(username, grupos):
+    """Junta as legendas de varias categorias (reels, posts...) num unico
+    texto -- grupos: lista de (nome_categoria, lista_de_medias, engine)."""
+    L = [f"Descricoes das publicacoes de @{username}", ""]
+    total = 0
+    for nome, medias, engine in grupos:
+        itens = []
+        for m in medias:
+            data_str, legenda = _extrair_legenda_data(m, engine)
+            if legenda:
+                itens.append((data_str, legenda))
+        if not itens:
+            continue
+        L.append(f"=== {nome.upper()} ({len(itens)} com legenda) ===")
+        L.append("")
+        for data_str, legenda in itens:
+            L.append(f"[{data_str}]")
+            L.append(legenda)
+            L.append("")
+            L.append("-" * 40)
+            L.append("")
+        total += len(itens)
+    if total == 0:
+        L.append("Nenhuma publicacao com legenda foi encontrada.")
+    L.append(f"Gerado por IG-Scraper Pro em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    return "\n".join(L)
+
 def _highlight_cover_url(cover):
     """cover_media do Highlight vem como dict cru da API do Instagram, nao
     como objeto Media -- tenta achar a url da imagem em algumas chaves
@@ -1725,6 +1764,7 @@ def _do_download_all(target_username, account_index):
                         current=f"@{tu}", logs=[], stop_requested=False, zip_url=None,
                         speed="", speed_avg="", failed_count=0, started_at=time.time())
     all_saved = []  # lista de (caminho, subpasta) pro zip final
+    reels, posts = [], []  # guardados tambem pra montar descricoes.txt no final
     try:
         try:
             engine, cl = _get_client(account_index)
@@ -1860,6 +1900,18 @@ def _do_download_all(target_username, account_index):
                 _add_log(f"Erro ao buscar destaques: {_translate_any_error(e)}", "error")
 
         if not scrape_state.get("stop_requested"):
+            # Descricoes (legendas) dos reels e posts, tudo num unico
+            # arquivo -- muita gente coloca preco/servico direto na legenda
+            try:
+                texto_descricoes = _montar_descricoes_txt(tu, [("reels", reels, engine), ("posts", posts, engine)])
+                desc_path = f"{DOWNLOADS_DIR}/{tu}/descricoes.txt"
+                with open(desc_path, "w", encoding="utf-8") as f:
+                    f.write(texto_descricoes)
+                all_saved.append((desc_path, None))
+                _add_log(f"Descricoes de @{tu} salvas em texto (descricoes.txt)")
+            except Exception as e:
+                _add_log(f"Erro ao salvar descricoes: {_translate_any_error(e)}", "error")
+
             zip_url = _make_zip(tu, all_saved)
             scrape_state["zip_url"] = zip_url
             done_msg = f"Finalizado: {len(all_saved)} arquivos baixados (tudo de @{tu})"
