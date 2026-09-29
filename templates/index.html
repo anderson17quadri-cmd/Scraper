@@ -1015,6 +1015,11 @@ input[type=range]::-moz-range-thumb { width:20px; height:20px; border:none; bord
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 const $ = (s) => document.getElementById(s);
 const ic = (n, cls='icon') => `<svg class="${cls}"><use href="#i-${n}"/></svg>`;
+// todo texto que vem do Instagram (bio, nomes, titulos, mensagens de erro)
+// passa por aqui antes de ir pra tela -- senao um perfil poderia esconder
+// codigo na bio e ele rodaria dentro do app
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const linkSeguro = (u) => /^https?:\/\//i.test(String(u || '')) ? esc(u) : '#';
 async function api(path, opts={}, timeoutMs=30000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -1050,7 +1055,7 @@ function fillSelect(el, firstLabel, accounts, mostrarMotor = false) {
     const motor = mostrarMotor
       ? ' · ' + (a.engine === 'instaloader' ? 'Instaloader' : 'Instagrapi')
       : '';
-    html += `<option value="${i}">@${a.username}${motor}</option>`;
+    html += `<option value="${i}">@${esc(a.username)}${motor}</option>`;
   });
   el.innerHTML = html;
   if ([...el.options].some(o => o.value === prev)) el.value = prev;
@@ -1104,7 +1109,7 @@ async function doSessionLogin() {
     currentUser = r.username;
     $('overlay').classList.add('hidden');
     $('header-badge').className = 'status-badge online';
-    $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+r.username;
+    $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+esc(r.username);
     $('s-session-text').textContent = 'On';
     $('s-session-user').textContent = '@'+r.username;
     toast(r.msg);
@@ -1129,7 +1134,7 @@ async function doBrowserLogin(selectId, engine) {
     currentUser = r.username;
     $('overlay').classList.add('hidden');
     $('header-badge').className = 'status-badge online';
-    $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+r.username;
+    $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+esc(r.username);
     $('s-session-text').textContent = 'On';
     $('s-session-user').textContent = '@'+r.username;
     toast(r.msg);
@@ -1156,7 +1161,7 @@ async function doLogin() {
     currentUser = r.username;
     $('overlay').classList.add('hidden');
     $('header-badge').className = 'status-badge online';
-    $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+r.username;
+    $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+esc(r.username);
     $('s-session-text').textContent = 'On';
     $('s-session-user').textContent = '@'+r.username;
     toast(r.msg);
@@ -1409,7 +1414,7 @@ async function buscarPorLink() {
   const r = await api('/api/preview-url', {method:'POST', body:JSON.stringify(body)});
   $('btn-url-load').disabled = false;
   if (!r.ok) {
-    $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    $('preview-grid').innerHTML = '<div class="empty"><p>'+esc(r.msg)+'</p></div>';
     return toast(r.msg, 'err');
   }
   previewCacheKey = r.cache_key;
@@ -1425,7 +1430,7 @@ async function loadReelsPreview() {
   $('preview-grid').innerHTML = '<div class="empty"><p>Buscando reels...</p></div>';
   const r = await api('/api/reels', {method:'POST', body:JSON.stringify(previewAccountBody())});
   if (!r.ok) {
-    $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    $('preview-grid').innerHTML = '<div class="empty"><p>'+esc(r.msg)+'</p></div>';
     return toast(r.msg, 'err');
   }
   previewCacheKey = r.cache_key;
@@ -1489,33 +1494,34 @@ async function verInfoPerfil() {
   if (!previewTarget) return;
   const card = $('info-perfil-card');
   card.hidden = false;
-  card.innerHTML = '<p class="card-sub">Buscando informações de @' + previewTarget + '...</p>';
+  card.innerHTML = '<p class="card-sub">Buscando informações de @' + esc(previewTarget) + '...</p>';
   const r = await api('/api/profile-info', {method:'POST', body:JSON.stringify(previewAccountBody())});
   if (!r.ok) {
-    card.innerHTML = '<p class="card-sub">' + r.msg + '</p>';
+    card.innerHTML = '<p class="card-sub">' + esc(r.msg) + '</p>';
     return toast(r.msg, 'err');
   }
   const i = r.info;
-  const linha = (label, valor) => valor ? `<p><b>${label}:</b> ${valor}</p>` : '';
+  const linha = (label, valorHtml) => valorHtml ? `<p><b>${label}:</b> ${valorHtml}</p>` : '';
+  const link = (u) => `<a href="${linkSeguro(u)}" target="_blank" rel="noopener">${esc(u)}</a>`;
   let contatoHtml = '';
-  if (i.site) contatoHtml += linha('Site', `<a href="${i.site}" target="_blank" rel="noopener">${i.site}</a>`);
-  if (i.email_estruturado) contatoHtml += linha('E-mail', i.email_estruturado);
-  if (i.telefone_estruturado) contatoHtml += linha('Telefone', i.telefone_estruturado);
-  (i.emails_na_bio || []).forEach(e => contatoHtml += linha('E-mail (na bio)', e));
-  (i.whatsapp_na_bio || []).forEach(w => contatoHtml += linha('WhatsApp (na bio)', '+' + w));
-  (i.telefones_na_bio || []).forEach(t => contatoHtml += linha('Telefone (na bio)', t));
-  (i.links_na_bio || []).forEach(l => { if (l !== i.site) contatoHtml += linha('Link na bio', `<a href="${l}" target="_blank" rel="noopener">${l}</a>`); });
+  if (i.site) contatoHtml += linha('Site', link(i.site));
+  if (i.email_estruturado) contatoHtml += linha('E-mail', esc(i.email_estruturado));
+  if (i.telefone_estruturado) contatoHtml += linha('Telefone', esc(i.telefone_estruturado));
+  (i.emails_na_bio || []).forEach(e => contatoHtml += linha('E-mail (na bio)', esc(e)));
+  (i.whatsapp_na_bio || []).forEach(w => contatoHtml += linha('WhatsApp (na bio)', esc('+' + w)));
+  (i.telefones_na_bio || []).forEach(t => contatoHtml += linha('Telefone (na bio)', esc(t)));
+  (i.links_na_bio || []).forEach(l => { if (l !== i.site) contatoHtml += linha('Link na bio', link(l)); });
   if (!contatoHtml) contatoHtml = '<p class="card-sub">Não encontrei site, telefone/WhatsApp nem e-mail nesse perfil.</p>';
 
   card.innerHTML = `
-    <div class="card-header"><span class="card-title">@${i.username}${i.nome_completo ? ' -- ' + i.nome_completo : ''}</span></div>
-    <p class="card-sub" style="white-space:pre-wrap;">${i.bio || '(sem biografia)'}</p>
+    <div class="card-header"><span class="card-title">@${esc(i.username)}${i.nome_completo ? ' -- ' + esc(i.nome_completo) : ''}</span></div>
+    <p class="card-sub" style="white-space:pre-wrap;">${esc(i.bio || '(sem biografia)')}</p>
     <div style="margin-top:8px;">${contatoHtml}</div>
     <p class="card-sub" style="margin-top:8px;">
-      ${i.seguidores ?? '?'} seguidores · ${i.seguindo ?? '?'} seguindo · ${i.publicacoes ?? '?'} publicações
+      ${esc(i.seguidores ?? '?')} seguidores · ${esc(i.seguindo ?? '?')} seguindo · ${esc(i.publicacoes ?? '?')} publicações
       ${i.comercial ? ' · Conta comercial' : ''}${i.verificado ? ' · Verificado' : ''}${i.privado ? ' · Privado' : ''}
     </p>
-    <a class="btn btn-ghost btn-xs btn-full" style="margin-top:8px;" href="${r.url}" download target="_blank">
+    <a class="btn btn-ghost btn-xs btn-full" style="margin-top:8px;" href="${esc(r.url)}" download target="_blank">
       <svg class="icon"><use href="#i-download"/></svg> Baixar essas informações em .txt
     </a>`;
 }
@@ -1543,7 +1549,7 @@ async function loadPostsPreview() {
   const r = await api('/api/preview', {method:'POST', body:JSON.stringify(previewAccountBody())});
   if (!r.ok) {
     $('btn-preview-load').disabled = false;
-    $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    $('preview-grid').innerHTML = '<div class="empty"><p>'+esc(r.msg)+'</p></div>';
     return toast(r.msg, 'err');
   }
 
@@ -1581,7 +1587,7 @@ async function loadStoriesPreview() {
 
   const r = await api('/api/stories', {method:'POST', body:JSON.stringify(previewAccountBody())});
   if (!r.ok) {
-    $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    $('preview-grid').innerHTML = '<div class="empty"><p>'+esc(r.msg)+'</p></div>';
     return toast(r.msg, 'err');
   }
   previewCacheKey = r.cache_key;
@@ -1600,7 +1606,7 @@ async function loadHighlightsList() {
 
   const r = await api('/api/highlights', {method:'POST', body:JSON.stringify(previewAccountBody())});
   if (!r.ok) {
-    $('highlights-list').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    $('highlights-list').innerHTML = '<div class="empty"><p>'+esc(r.msg)+'</p></div>';
     return toast(r.msg, 'err');
   }
   highlightsList = r.items;
@@ -1616,9 +1622,9 @@ function renderHighlightsList() {
   let html = '<div class="preview-grid">';
   highlightsList.forEach((h, i) => {
     const img = h.cover
-      ? `<img src="${h.cover}" loading="lazy">`
+      ? `<img src="${esc(h.cover)}" loading="lazy">`
       : `<div class="empty" style="padding:24px 0;font-size:1.3rem;">${ic('star')}</div>`;
-    html += `<div class="preview-item" onclick="openHighlight(${i})" title="${h.title} (${h.count} itens)">
+    html += `<div class="preview-item" onclick="openHighlight(${i})" title="${esc(h.title)} (${esc(h.count)} itens)">
       ${img}<span class="badge-type">${ic('star')}</span>
     </div>`;
   });
@@ -1639,7 +1645,7 @@ async function openHighlight(index) {
   body.title = h.title;
   const r = await api('/api/highlight-items', {method:'POST', body:JSON.stringify(body)});
   if (!r.ok) {
-    $('preview-grid').innerHTML = '<div class="empty"><p>'+r.msg+'</p></div>';
+    $('preview-grid').innerHTML = '<div class="empty"><p>'+esc(r.msg)+'</p></div>';
     return toast(r.msg, 'err');
   }
   previewCacheKey = r.cache_key;
@@ -1663,9 +1669,9 @@ function renderPreview() {
     const sel = previewSelected.has(it.id);
     const badge = it.type === 'video' ? ic('video') : it.type === 'carousel' ? ic('layers') : '';
     const img = it.thumbnail
-      ? `<img src="${it.thumbnail}" loading="lazy">`
+      ? `<img src="${esc(it.thumbnail)}" loading="lazy">`
       : '<div class="empty" style="padding:26px 0;font-size:1.4rem;">?</div>';
-    html += `<div class="preview-item ${sel?'selected':''} ${it.already?'already':''}" onclick="togglePreview('${it.id}')" title="${it.already?'Ja baixado':''}">
+    html += `<div class="preview-item ${sel?'selected':''} ${it.already?'already':''}" onclick="togglePreview('${esc(it.id)}')" title="${it.already?'Ja baixado':''}">
       ${img}
       ${badge?`<span class="badge-type">${badge}</span>`:''}
       <span class="check">${(it.already||sel) ? ic('check') : ''}</span>
@@ -1741,7 +1747,7 @@ function pollStatus() {
       s.logs.slice(current).forEach(l => {
         const d = document.createElement('div');
         d.className = 'log-line';
-        d.innerHTML = `<span class="log-time">${l.time}</span><span class="log-${l.type}">${l.msg}</span>`;
+        d.innerHTML = `<span class="log-time">${esc(l.time)}</span><span class="log-${esc(l.type)}">${esc(l.msg)}</span>`;
         lc.appendChild(d);
         lc.scrollTop = lc.scrollHeight;
       });
@@ -1755,7 +1761,7 @@ function pollStatus() {
       if (s.zip_url && s.zip_url !== lastZipUrl) {
         lastZipUrl = s.zip_url;
         $('preview-zip').hidden = false;
-        $('preview-zip').innerHTML = `<a href="${s.zip_url}" target="_blank"><button class="btn btn-success btn-full btn-lg">${ic('package')} Baixar ZIP dos selecionados</button></a>`;
+        $('preview-zip').innerHTML = `<a href="${esc(s.zip_url)}" target="_blank"><button class="btn btn-success btn-full btn-lg">${ic('package')} Baixar ZIP dos selecionados</button></a>`;
         // o card de progresso fica no fim da pagina: sem avisar e rolar
         // ate ele, o zip pronto passava despercebido
         toast('ZIP pronto! Toque no botão verde para baixar');
@@ -1764,7 +1770,7 @@ function pollStatus() {
 
       if (loggedIn) {
         $('header-badge').className = 'status-badge online';
-        $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+currentUser;
+        $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+esc(currentUser);
       } else {
         $('header-badge').className = 'status-badge offline';
         $('header-badge').innerHTML = '<span class="status-dot red"></span> Desconectado';
@@ -1794,7 +1800,7 @@ function pollStatus() {
 function thumbCell(type, url) {
   const icon = ic(type === 'photo' ? 'image' : 'video');
   if (type === 'photo' && url) {
-    return `<div class="dl-icon"><img src="${url}" loading="lazy" onerror="this.parentElement.innerHTML='${icon.replace(/"/g,'&quot;')}'"></div>`;
+    return `<div class="dl-icon"><img src="${esc(url)}" loading="lazy" onerror="this.parentElement.innerHTML='${icon.replace(/"/g,'&quot;')}'"></div>`;
   }
   return `<div class="dl-icon">${icon}</div>`;
 }
@@ -1812,7 +1818,7 @@ async function refreshAll() {
   if (sess.connected) {
     loggedIn = true; currentUser = sess.current_account;
     $('header-badge').className = 'status-badge online';
-    $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+sess.current_account;
+    $('header-badge').innerHTML = '<span class="status-dot green"></span> @'+esc(sess.current_account);
     $('s-session-text').textContent = 'On';
     $('s-session-user').textContent = '@'+sess.current_account;
     $('overlay').classList.add('hidden');
@@ -1828,19 +1834,19 @@ async function refreshAll() {
   let ahtml = '';
   (accs.accounts||[]).forEach((a, i) => {
     const active = a.active !== false;
-    const method = a.sessionid ? 'sessão' : 'senha';
+    const method = a.method === 'sessao' ? 'sessão' : 'senha';
     const engine = a.engine === 'instaloader' ? 'Instaloader' : 'Instagrapi';
     const engCls = a.engine === 'instaloader' ? 'badge-yellow' : 'badge-blue';
     const test = accountTestResults[i];
     const shortMsg = (test && test.msg && test.msg.length > 70) ? test.msg.slice(0, 70) + '…' : (test && test.msg);
     const testBadge = test
       ? (test.ok
-          ? `<span class="badge badge-green" title="${test.msg}">✓ Funcionando</span>`
-          : `<span class="badge badge-red badge-msg" title="${test.msg}">✗ ${shortMsg}</span>`)
+          ? `<span class="badge badge-green" title="${esc(test.msg)}">✓ Funcionando</span>`
+          : `<span class="badge badge-red badge-msg" title="${esc(test.msg)}">✗ ${esc(shortMsg)}</span>`)
       : '';
     ahtml += `<div class="list-item" style="opacity:${active?1:0.55}">
       <div class="info">
-        <div class="name"><span class="status-dot ${active?'green':'red'}"></span>@${a.username}</div>
+        <div class="name"><span class="status-dot ${active?'green':'red'}"></span>@${esc(a.username)}</div>
         <div class="meta"><span class="badge ${engCls}">${engine}</span><span class="badge badge-neutral">${method}</span>${testBadge}</div>
       </div>
       <div class="actions">
@@ -1862,11 +1868,11 @@ async function refreshAll() {
     const stars = '★'.repeat(t.priority||1);
     thtml += `<div class="list-item" style="opacity:${active?1:0.55}">
       <div class="info">
-        <div class="name"><span class="status-dot ${active?'green':'red'}"></span>@${t.username}</div>
+        <div class="name"><span class="status-dot ${active?'green':'red'}"></span>@${esc(t.username)}</div>
         <div class="meta"><span style="color:var(--yellow)">${stars}</span></div>
       </div>
       <div class="actions">
-        <button class="btn btn-primary btn-xs" onclick="baixarDoAlvo('${t.username}')" title="Baixar desse perfil">${ic('search')} Baixar</button>
+        <button class="btn btn-primary btn-xs" data-u="${esc(t.username)}" onclick="baixarDoAlvo(this.dataset.u)" title="Baixar desse perfil">${ic('search')} Baixar</button>
         <button class="btn btn-ghost btn-xs" onclick="toggleTarget(${i})">${active?'Pausar':'Ativar'}</button>
         <button class="btn btn-danger btn-xs" onclick="delTarget(${i})" title="Remover">${ic('trash')}</button>
       </div></div>`;
@@ -1881,7 +1887,7 @@ async function refreshAll() {
   let savedHtml = '<option value="">Ou escolha um perfil alvo salvo...</option>';
   (tgt.targets || []).forEach(t => {
     if (t.active === false) return;
-    savedHtml += `<option value="${t.username}">@${t.username}</option>`;
+    savedHtml += `<option value="${esc(t.username)}">@${esc(t.username)}</option>`;
   });
   savedSel.innerHTML = savedHtml;
 
@@ -1909,8 +1915,7 @@ async function refreshAll() {
   // Recent
   let rhtml = '';
   (stats.recent||[]).slice(0, 15).forEach(r => {
-    const url = `/downloads/${r.profile}/${r.file}`;
-    rhtml += `<div class="dl-item">${thumbCell(r.type, url)}<div class="dl-info"><strong>${r.file}</strong><small>@${r.profile} &middot; ${(r.date||'').substring(0,16)}</small></div></div>`;
+    rhtml += `<div class="dl-item">${thumbCell(r.type, r.url)}<div class="dl-info"><strong>${esc(r.file)}</strong><small>@${esc(r.profile)} &middot; ${esc((r.date||'').substring(0,16))}</small></div></div>`;
   });
   $('recent-list').innerHTML = rhtml || '<div class="empty"><p>Nenhum download</p></div>';
 
@@ -1921,9 +1926,9 @@ async function refreshAll() {
     tphtml += `<div class="list-item">
       <div class="info" style="display:flex;align-items:center;gap:10px;">
         <span style="font-weight:700;font-size:0.9rem;min-width:28px;">#${i+1}</span>
-        <span class="name">@${p.username}</span>
+        <span class="name">@${esc(p.username)}</span>
       </div>
-      <span class="badge badge-green">${p.count} downloads</span>
+      <span class="badge badge-green">${esc(p.count)} downloads</span>
     </div>`;
   });
   $('top-profiles').innerHTML = tphtml || '<div class="empty"><p>Nenhum perfil</p></div>';
@@ -1964,9 +1969,9 @@ function renderArquivos(files) {
   (files || []).forEach(f => {
     fhtml += `<div class="dl-item">
       ${thumbCell(f.type, f.exists ? f.url : null)}
-      <div class="dl-info"><strong>${f.file}</strong><small>@${f.username} &middot; ${(f.date||'').substring(0,16)}</small></div>
+      <div class="dl-info"><strong>${esc(f.file)}</strong><small>@${esc(f.username)} &middot; ${esc((f.date||'').substring(0,16))}</small></div>
       ${f.exists
-        ? `<a href="${f.url}" target="_blank" class="dl-link"><button class="btn btn-primary btn-xs">Baixar</button></a>`
+        ? `<a href="${esc(f.url)}" target="_blank" class="dl-link"><button class="btn btn-primary btn-xs">Baixar</button></a>`
         : '<span class="badge badge-red">Deletado</span>'}
     </div>`;
   });
@@ -1989,7 +1994,7 @@ function loadErrors() {
     r.errors.forEach(e => {
       html += `<div class="list-item">
         <div class="info">
-          <div class="name">${e.message}</div>
+          <div class="name">${esc(e.message)}</div>
           <div class="meta">${(e.occurred_at || '').replace('T', ' ').substring(0, 19)}</div>
         </div>
       </div>`;
@@ -2152,7 +2157,7 @@ async function abrirPasta() {
 // ─── RESET ───────────────────────────────────────────────────────────────────
 async function resetDB() {
   if (!confirm('Apagar todo o histórico de downloads?')) return;
-  await api('/api/reset');
+  await api('/api/reset', {method:'POST', body:'{}'});
   toast('Histórico limpo!');
   refreshAll();
 }

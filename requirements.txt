@@ -4,3 +4,4 @@ instaloader
 rich
 python-dotenv
 requests
+browser_cookie3

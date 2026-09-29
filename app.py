@@ -4,7 +4,7 @@ IG-SCRAPER-PRO v4.0 - Web Dashboard
 python app.py  ->  http://localhost:5000
 """
 
-import os, sys, json, time, threading, sqlite3, random, zipfile, re, itertools
+import os, sys, json, time, threading, sqlite3, random, zipfile, re, itertools, urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_from_directory, Response
@@ -62,6 +62,8 @@ def init_db():
         username TEXT PRIMARY KEY, total_downloads INTEGER DEFAULT 0, last_use TEXT)""")
     c.execute("""CREATE TABLE IF NOT EXISTS error_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT, occurred_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS downloaded_items (
+        media_id TEXT PRIMARY KEY, username TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_username ON downloads(username)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_downloaded_at ON downloads(downloaded_at)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_error_occurred_at ON error_log(occurred_at)")
@@ -81,7 +83,16 @@ def db_query(sql, params=(), fetch=True):
     return rows
 
 def is_downloaded(media_id):
-    return len(db_query("SELECT id FROM downloads WHERE media_id=?", (media_id,))) > 0
+    # downloaded_items guarda o id "pai" de carrosseis (cada foto do
+    # carrossel vai pra downloads com o id dela, nunca com o do post)
+    return len(db_query(
+        "SELECT 1 FROM downloads WHERE media_id=? UNION ALL "
+        "SELECT 1 FROM downloaded_items WHERE media_id=? LIMIT 1",
+        (media_id, media_id))) > 0
+
+def mark_downloaded(media_id, username):
+    db_query("INSERT OR IGNORE INTO downloaded_items (media_id, username) VALUES (?,?)",
+             (str(media_id), username), fetch=False)
 
 def add_download(data):
     try:
@@ -93,6 +104,23 @@ def add_download(data):
     except sqlite3.IntegrityError:
         pass
 
+def _localizador_de_arquivos():
+    """O banco guarda so o nome do arquivo, mas reels/stories/destaques
+    ficam em subpastas do perfil. Devolve uma funcao (usuario, arquivo) ->
+    (existe, url) que indexa a pasta de cada perfil uma vez so."""
+    indices = {}
+    def localizar(uname, fname):
+        if uname not in indices:
+            mapa = {}
+            for raiz, _dirs, arqs in os.walk(os.path.join(DOWNLOADS_DIR, uname)):
+                for a in arqs:
+                    mapa.setdefault(a, os.path.relpath(os.path.join(raiz, a), DOWNLOADS_DIR))
+            indices[uname] = mapa
+        rel = indices[uname].get(fname)
+        rel_url = (rel or f"{uname}/{fname}").replace(os.sep, "/")
+        return rel is not None, "/downloads/" + urllib.parse.quote(rel_url)
+    return localizar
+
 def get_stats():
     t = db_query("SELECT COUNT(*) FROM downloads")[0][0]
     p = db_query("SELECT COUNT(DISTINCT username) FROM downloads")[0][0]
@@ -100,7 +128,9 @@ def get_stats():
     rows = db_query("SELECT username, COUNT(*) as cnt FROM downloads GROUP BY username ORDER BY cnt DESC LIMIT 10")
     top = [{"username": r[0], "count": r[1]} for r in rows]
     rows = db_query("SELECT file, username, type, downloaded_at FROM downloads ORDER BY downloaded_at DESC LIMIT 20")
-    recent = [{"file": r[0], "profile": r[1], "type": r[2], "date": r[3]} for r in rows]
+    localizar = _localizador_de_arquivos()
+    recent = [{"file": r[0], "profile": r[1], "type": r[2], "date": r[3],
+               "url": localizar(r[1], r[0])[1]} for r in rows]
     rows = db_query("SELECT DATE(downloaded_at) as day, COUNT(*) as cnt FROM downloads "
                      "WHERE downloaded_at >= DATE('now','-7 days') GROUP BY day ORDER BY day")
     daily = {r[0]: r[1] for r in rows}
@@ -115,13 +145,19 @@ def get_stats():
 # ─── JSON HELPERS ─────────────────────────────────────────────────────────────
 def jload(path, default=None):
     if os.path.exists(path):
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     return default if default is not None else {}
 
 def jsave(path, data):
-    with open(path, 'w') as f:
+    # grava num arquivo temporario e so depois troca pelo original: se o
+    # PC desligar no meio, o accounts.json antigo continua inteiro
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    with open(tmp, 'w', encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 def init_files():
     if not os.path.exists(ACCOUNTS_PATH): jsave(ACCOUNTS_PATH, {"accounts": []})
@@ -497,6 +533,31 @@ def _add_log(msg, typ="info"):
         except Exception:
             pass
 
+_BIND_HOST = os.environ.get("IGSCRAPER_HOST", "127.0.0.1")
+_HOSTS_LOCAIS = {"localhost", "127.0.0.1", "[::1]"}
+_ORIGEM_CONFIAVEL = re.compile(
+    r'^(https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?|chrome-extension://[a-p]{32}|moz-extension://[\w-]+)$')
+
+@app.before_request
+def _protege_api():
+    """Bloqueia outros sites abertos no navegador de mexer no app:
+    - Host precisa ser local (evita "DNS rebinding", truque pra um site
+      qualquer fingir que e o localhost e ler as respostas)
+    - acoes (POST/DELETE) so aceitas vindas da propria tela, da extensao
+      ou do app desktop, e sempre em JSON (formulario de outro site nao
+      consegue mandar JSON sem permissao)"""
+    if _BIND_HOST in ("127.0.0.1", "localhost"):
+        host = (request.host or "").rsplit(":", 1)[0].lower()
+        if host not in _HOSTS_LOCAIS:
+            return jsonify({"ok": False, "msg": "Acesso bloqueado"}), 403
+    if request.method != "GET" and request.path.startswith("/api/"):
+        origem = request.headers.get("Origin")
+        mesma_origem = origem == f"{request.scheme}://{request.host}"
+        if origem and not mesma_origem and not _ORIGEM_CONFIAVEL.match(origem):
+            return jsonify({"ok": False, "msg": "Origem nao permitida"}), 403
+        if not request.is_json:
+            return jsonify({"ok": False, "msg": "Requisicao invalida"}), 403
+
 @app.after_request
 def _log_error_responses(response):
     """Grava no historico QUALQUER resposta de erro da API (nao so as do
@@ -721,6 +782,8 @@ def _run_downloads(medias, downloader, cl, tu, folder, get_id, progress_offset=0
                     saved = fut.result()
                 except Exception:
                     saved = []
+                if saved:
+                    mark_downloaded(get_id(m), tu)
                 with lock:
                     scrape_state["progress"] += 1
                     all_saved.extend(saved)
@@ -742,6 +805,7 @@ def _run_downloads(medias, downloader, cl, tu, folder, get_id, progress_offset=0
             all_saved.extend(saved)
             downloaded_count += len(saved)
             if saved:
+                mark_downloaded(get_id(m), tu)
                 _human_delay_after(m)
             else:
                 failed.append(m)
@@ -1139,8 +1203,16 @@ def api_session():
 @app.route("/api/accounts", methods=["GET", "POST", "DELETE"])
 def api_accounts():
     if request.method == "GET":
-        return jsonify(jload(ACCOUNTS_PATH))
-    data = request.get_json()
+        # nunca manda senha/sessionid pro navegador -- a tela so precisa
+        # saber o metodo de login, e qualquer codigo rodando na pagina
+        # conseguiria ler o que vier aqui
+        contas = []
+        for a in jload(ACCOUNTS_PATH).get("accounts", []):
+            segura = {k: v for k, v in a.items() if k not in ("password", "sessionid")}
+            segura["method"] = "sessao" if a.get("sessionid") else "senha"
+            contas.append(segura)
+        return jsonify({"accounts": contas})
+    data = request.get_json() or {}
     if request.method == "POST":
         username = (data.get("username") or "").strip()
         password = (data.get("password") or "").strip()
@@ -1172,11 +1244,14 @@ def api_accounts():
 def api_targets():
     if request.method == "GET":
         return jsonify(jload(TARGETS_PATH))
-    data = request.get_json()
+    data = request.get_json() or {}
     if request.method == "POST":
+        username = (data.get("username") or "").strip().lstrip("@")
+        if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", username):
+            return jsonify({"ok": False, "msg": "Usuario do Instagram invalido"})
         t = jload(TARGETS_PATH)
         t.setdefault("targets", []).append({
-            "username": data["username"], "priority": data.get("priority", 1),
+            "username": username, "priority": data.get("priority", 1),
             "active": True, "added_at": datetime.now().isoformat()
         })
         jsave(TARGETS_PATH, t)
@@ -2156,23 +2231,22 @@ def api_downloads():
     rows = db_query(
         f"SELECT file, username, type, date, downloaded_at FROM downloads {filtro} "
         "ORDER BY downloaded_at DESC LIMIT 100", tuple(params))
+    localizar = _localizador_de_arquivos()
     files = []
     for r in rows:
         uname, fname = r[1], r[0]
-        fpath = f"{DOWNLOADS_DIR}/{uname}/{fname}"
-        files.append({
-            "username": uname, "file": fname, "type": r[2], "date": r[3],
-            "exists": os.path.exists(fpath),
-            "url": f"/downloads/{uname}/{fname}"
-        })
+        existe, url = localizar(uname, fname)
+        files.append({"username": uname, "file": fname, "type": r[2], "date": r[3],
+                      "exists": existe, "url": url})
     return jsonify(files)
 
-@app.route("/api/reset")
+@app.route("/api/reset", methods=["POST"])
 def api_reset():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=_DB_TIMEOUT)
     c = conn.cursor()
     c.execute("DROP TABLE IF EXISTS downloads")
     c.execute("DROP TABLE IF EXISTS accounts_stats")
+    c.execute("DROP TABLE IF EXISTS downloaded_items")
     conn.commit()
     conn.close()
     init_db()
@@ -2191,6 +2265,7 @@ def api_reset_profile():
         return jsonify({"ok": False, "msg": "Informe o perfil"})
     db_query("DELETE FROM downloads WHERE username=?", (username,), fetch=False)
     db_query("DELETE FROM accounts_stats WHERE username=?", (username,), fetch=False)
+    db_query("DELETE FROM downloaded_items WHERE username=?", (username,), fetch=False)
     return jsonify({"ok": True, "msg": f"Histórico de @{username} zerado"})
 
 @app.route("/downloads/<path:filename>")
@@ -2209,5 +2284,10 @@ if __name__ == "__main__":
     print("  IG-SCRAPER-PRO v4.0  |  WEB DASHBOARD")
     print("=" * 55)
     print("  http://localhost:5000")
+    if _BIND_HOST not in ("127.0.0.1", "localhost"):
+        print(f"  ATENCAO: aberto na rede ({_BIND_HOST}) -- qualquer um no")
+        print("  mesmo Wi-Fi consegue acessar o painel")
     print("=" * 55 + "\n")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    # so o proprio aparelho acessa; pra abrir na rede (ex: usar do celular
+    # com o app rodando no PC) rode com IGSCRAPER_HOST=0.0.0.0
+    app.run(host=_BIND_HOST, port=5000, debug=False)

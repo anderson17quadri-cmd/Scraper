@@ -30,6 +30,7 @@ a = Analysis(
         'instaloader.exceptions',
         'pystray',
         'pystray._win32',
+        'browser_cookie3',
     ],
     hookspath=[],
     hooksconfig={},
