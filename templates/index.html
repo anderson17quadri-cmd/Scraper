@@ -81,6 +81,8 @@ header {
 }
 .logo span:not(.logo-mark) { background:var(--grad); -webkit-background-clip:text;
   background-clip:text; color:transparent; font-weight:800; }
+.app-version { font-size:0.68rem; font-weight:700; color:var(--muted); background:rgba(255,255,255,.05);
+  border:1px solid var(--border); border-radius:99px; padding:2px 8px; letter-spacing:0; }
 #header-status { max-width:38vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .status-badge {
   display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:99px;
@@ -678,7 +680,7 @@ input[type=range]::-moz-range-thumb { width:14px; height:14px; border:5px solid 
 
 <!-- HEADER -->
 <header>
-  <div class="logo"><span class="logo-mark"><svg class="icon"><use href="#i-camera"/></svg></span>IG-Scraper <span>Pro</span></div>
+  <div class="logo"><span class="logo-mark"><svg class="icon"><use href="#i-camera"/></svg></span>IG-Scraper <span>Pro</span><small class="app-version">v{{ app_version }}</small></div>
   <div style="display:flex;align-items:center;gap:12px;">
     <span id="header-status" style="font-size:0.8rem;color:var(--dim);">Aguardando...</span>
     <span id="header-badge" class="status-badge offline">

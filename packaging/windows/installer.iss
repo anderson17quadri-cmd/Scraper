@@ -14,7 +14,7 @@
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\installer.iss
 
 #define MyAppName "IG-Scraper Pro"
-#define MyAppVersion "4.0"
+#define MyAppVersion "5.0"
 #define MyAppExeName "IGScraperPro.exe"
 
 [Setup]

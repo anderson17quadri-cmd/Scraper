@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IG-SCRAPER-PRO v4.0 - Web Dashboard
+IG-SCRAPER-PRO v5.0 - Web Dashboard
 python app.py  ->  http://localhost:5000
 """
 
@@ -32,6 +32,8 @@ else:
 # do usuario, tipo %LOCALAPPDATA%) antes de importar este modulo. No
 # Termux/uso normal essa variavel nao existe e tudo continua relativo ao
 # diretorio atual, como sempre foi.
+APP_VERSION = "5.0"
+
 _DATA_DIR = os.environ.get("IGSCRAPER_DATA_DIR") or "."
 DOWNLOADS_DIR = os.path.join(_DATA_DIR, "downloads")
 ZIPS_DIR = f"{DOWNLOADS_DIR}/_zips"
@@ -2274,14 +2276,14 @@ def serve_download(filename):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", app_version=APP_VERSION)
 
 if __name__ == "__main__":
     init_db()
     init_files()
     _sync_auto_mode()  # religa o agendamento se estava ligado
     print("\n" + "=" * 55)
-    print("  IG-SCRAPER-PRO v4.0  |  WEB DASHBOARD")
+    print(f"  IG-SCRAPER-PRO v{APP_VERSION}  |  WEB DASHBOARD")
     print("=" * 55)
     print("  http://localhost:5000")
     if _BIND_HOST not in ("127.0.0.1", "localhost"):
